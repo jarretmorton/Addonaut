@@ -12,8 +12,8 @@ Addonaut tells you up front which parts of your idea it can build and which it
 is leaving out.
 
 **Bring your own key (BYOK).** The app runs entirely in your browser. You supply
-your own API key — a free Google Gemini key works — and it is stored only on
-your device and sent straight to the provider, never to any server of ours.
+your own free Google Gemini API key; it is stored only on your device and sent
+straight to Google — never to any server of ours.
 
 ## The flow
 
@@ -103,27 +103,30 @@ Everything configurable lives at the top of the script in
 [`index.html`](index.html):
 
 - `APP_VERSION` — shown in the header. Bump on release.
-- `DEFAULT_MODEL` — the model per provider. Currently `gemini-3.8-flash` for
-  Google and `claude-sonnet-5` for Anthropic.
+- `DEFAULT_MODEL` — the model to call. Currently `gemini-3.8-flash`.
 - `RETIRED_MODELS` — model IDs this app once prefilled into the Model box. A
   saved value matching one is cleared at boot, so a browser that never chose a
   model follows the current default instead of being pinned to an old one.
 
-The **⚙ button** in the header opens AI settings: provider, model and key. The
-Model box is editable, so a stale default can be fixed without touching the
-code — and a 404 from the provider says exactly that.
+The **⚙ button** in the header opens AI settings: model and key. The Model box
+is editable, so a stale default can be fixed without touching the code — and a
+404 from Google says exactly that.
 
-**Model names go stale.** Verify current Gemini IDs at
-<https://ai.google.dev/gemini-api/docs/models> and Claude IDs at
-<https://docs.anthropic.com/en/docs/about-claude/models>.
+**Model names go stale.** Verify current IDs at
+<https://ai.google.dev/gemini-api/docs/models>.
 
-Three `localStorage` keys, all written only by the settings panel:
+Two `localStorage` keys, both written only by the settings panel:
 
 | Key | Holds |
 | --- | --- |
-| `af_provider` | `gemini` or `claude` |
 | `af_model` | a model ID, or empty to follow `DEFAULT_MODEL` |
-| `af_key` | your API key |
+| `af_key` | your Gemini API key |
+
+Addonaut briefly offered Anthropic as a second provider. It doesn't any more, so
+boot clears what that left behind: the old `af_provider` flag, a saved
+`claude-sonnet-5`, and — deliberately — a saved Anthropic key, which must never
+be posted to Google's endpoint. Losing the key opens settings, which is where a
+Gemini key gets pasted.
 
 ## Getting a free Gemini API key
 
@@ -132,23 +135,20 @@ Three `localStorage` keys, all written only by the settings panel:
 3. Copy the key (starts with `AIza…`) and paste it into AI settings (⚙).
 
 The free tier has daily quotas that reset at midnight Pacific, and is **not
-available in the EEA, UK, or Switzerland**. Anthropic keys work too, from
-<https://console.anthropic.com/settings/keys>, but Claude has no free tier —
-you pay per use.
+available in the EEA, UK, or Switzerland**.
 
 ## Privacy & security
 
-- Your key lives only in `localStorage` on your device and is sent only in the
-  request header to the provider you picked — `x-goog-api-key` for Google,
-  `x-api-key` for Anthropic. It is never logged and never put in a URL.
+- Your key lives only in `localStorage` on your device and is sent **only** via
+  the `x-goog-api-key` request header — never as a URL parameter, never logged.
 - Only your typed description is sent to the model. Textures you paint, the
   properties you tune, and the `.mcaddon` are all built locally — the ZIP is
   assembled in the browser and never uploaded.
+- Google is the only host the app talks to.
 - No accounts, no analytics, no server. The page is static files.
-- Using Claude from the browser requires the
-  `anthropic-dangerous-direct-browser-access` header, which exposes your key to
-  any script on the page. That is the trade for a serverless BYOK app; keep the
-  page's origin trusted, and prefer a key you can rotate.
+- A key in `localStorage` is readable by any script running on this page. That
+  is the trade a serverless BYOK app makes, so prefer a free key you can revoke
+  and rotate over one with billing attached.
 
 ## Deploy to GitHub Pages
 

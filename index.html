@@ -130,31 +130,23 @@
       <span id="keyState" class="sm dim" style="margin-left:auto">no key saved yet</span>
     </header>
     <div class="body">
-      <p class="sm dim">Your key stays in this browser only. It is never sent anywhere except straight to the provider you choose.</p>
+      <p class="sm dim">Addonaut uses Google Gemini, which has a free tier. Your key stays in this
+      browser only — it is never sent anywhere except straight to Google.</p>
 
-      <div class="grid2" style="margin:16px 0">
-        <label>
-          <span class="sm dim">Provider</span>
-          <select id="provider">
-            <option value="gemini">Google Gemini — has a free tier</option>
-            <option value="claude">Anthropic Claude — pay per use</option>
-          </select>
-        </label>
-        <label>
-          <span class="sm dim">Model</span>
-          <input type="text" id="model" spellcheck="false">
-        </label>
-      </div>
+      <label style="margin:16px 0">
+        <span class="sm dim">Model</span>
+        <input type="text" id="model" spellcheck="false">
+      </label>
 
       <label>
-        <span class="sm dim">API key</span>
-        <input type="password" id="key" spellcheck="false" autocomplete="off" placeholder="paste your key here">
+        <span class="sm dim">Gemini API key</span>
+        <input type="password" id="key" spellcheck="false" autocomplete="off" placeholder="AIza…">
       </label>
 
       <div class="row" style="margin-top:16px">
         <button id="saveKey">Save key</button>
         <button id="clearKey" class="b-quiet">Forget key</button>
-        <a id="getKey" class="btn b-quiet b-sm" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Get a key</a>
+        <a class="btn b-quiet b-sm" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Get a free key</a>
       </div>
       <p id="keyMsg" class="sm gold" style="margin-top:12px"></p>
 
@@ -201,26 +193,21 @@ const S = {
 };
 
 /* Version — single source of truth, shown in the header. Bump on release. */
-const APP_VERSION = "0.1.0";
+const APP_VERSION = "0.2.0";
 
 /* gemini-3.8-flash is the newest Flash model on Google's free tier (released
    2026-09-02). Model names go stale fast; the Model box in AI settings is
    editable, and a 404 from Google says exactly that in the error. */
-const DEFAULT_MODEL = { gemini: "gemini-3.8-flash", claude: "claude-sonnet-5" };
+const DEFAULT_MODEL = "gemini-3.8-flash";
 
-/* Model ids this app once prefilled into that box. A saved value matching one
-   was the default of the day rather than a deliberate choice, so it is cleared
-   at boot. An empty saved model means "follow whatever the default is now". */
-const RETIRED_MODELS = ["gemini-2.5-flash"];
-
-const KEY_URL = {
-  gemini: "https://aistudio.google.com/apikey",
-  claude: "https://console.anthropic.com/settings/keys"
-};
+/* Model ids this app once prefilled into that box: an older Gemini default, and
+   claude-sonnet-5 from the Anthropic provider it used to offer. A saved value
+   matching one was never a deliberate choice, so it is cleared at boot. An
+   empty saved model means "follow whatever the default is now". */
+const RETIRED_MODELS = ["gemini-2.5-flash", "claude-sonnet-5"];
 
 function loadCfg(){
   return {
-    provider: localStorage.getItem("af_provider") || "gemini",
     model: localStorage.getItem("af_model") || "",
     key: localStorage.getItem("af_key") || ""
   };
@@ -432,42 +419,25 @@ function buildAddon(o){
 const num=(v,d)=> (typeof v==="number" && isFinite(v)) ? v : d;
 
 /* ============================================================
-   5. AI CALLS — one shape, two providers
+   5. AI CALLS — Gemini, key sent in the header only
    ============================================================ */
 async function ask(prompt){
   const cfg = loadCfg();
   if(!cfg.key) throw settingsProblem("Add an API key first — the ⚙ button at the top opens AI settings.");
-  const model = cfg.model || DEFAULT_MODEL[cfg.provider];
-  let res, text;
+  const model = cfg.model || DEFAULT_MODEL;
 
-  if(cfg.provider === "gemini"){
-    res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
-      { method:"POST",
-        headers:{"content-type":"application/json","x-goog-api-key":cfg.key},
-        body: JSON.stringify({
-          contents:[{parts:[{text:prompt}]}],
-          generationConfig:{temperature:1, maxOutputTokens:2000, responseMimeType:"application/json"}
-        })
-      });
-    if(!res.ok) throw await explain(res, "Gemini");
-    const d = await res.json();
-    text = (d.candidates?.[0]?.content?.parts||[]).map(p=>p.text||"").join("");
-  } else {
-    res = await fetch("https://api.anthropic.com/v1/messages",{
-      method:"POST",
-      headers:{
-        "content-type":"application/json",
-        "x-api-key":cfg.key,
-        "anthropic-version":"2023-06-01",
-        "anthropic-dangerous-direct-browser-access":"true"
-      },
-      body: JSON.stringify({model, max_tokens:1500, messages:[{role:"user",content:prompt}]})
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+    { method:"POST",
+      headers:{"content-type":"application/json","x-goog-api-key":cfg.key},
+      body: JSON.stringify({
+        contents:[{parts:[{text:prompt}]}],
+        generationConfig:{temperature:1, maxOutputTokens:2000, responseMimeType:"application/json"}
+      })
     });
-    if(!res.ok) throw await explain(res, "Claude");
-    const d = await res.json();
-    text = (d.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("");
-  }
+  if(!res.ok) throw await explain(res);
+  const d = await res.json();
+  const text = (d.candidates?.[0]?.content?.parts||[]).map(p=>p.text||"").join("");
 
   const clean = text.replace(/```json/gi,"").replace(/```/g,"").trim();
   const a = clean.indexOf("{"), b = clean.lastIndexOf("}");
@@ -483,13 +453,13 @@ function settingsProblem(msg){
   return e;
 }
 
-async function explain(res, who){
+async function explain(res){
   let detail = "";
   try { const j = await res.json(); detail = j.error?.message || ""; } catch {}
-  if(res.status===401 || res.status===403) return settingsProblem(`${who} rejected the key. Check it in AI settings.`);
-  if(res.status===429) return new Error(`${who} is rate limiting you. Wait a minute and try again.`);
-  if(res.status===404) return settingsProblem(`${who} doesn't know that model name. Change it in AI settings.`);
-  return new Error(`${who} returned ${res.status}. ${detail}`.trim());
+  if(res.status===400 || res.status===401 || res.status===403) return settingsProblem("Gemini rejected the key. Check it in AI settings.");
+  if(res.status===429) return new Error("Gemini is rate limiting you. Wait a minute and try again.");
+  if(res.status===404) return settingsProblem("Gemini doesn't know that model name. Change it in AI settings.");
+  return new Error(`Gemini returned ${res.status}. ${detail}`.trim());
 }
 
 const SPEC_PROMPT = (desc, hint) => `You plan Minecraft Bedrock Edition add-ons for a generator that builds exactly five things:
@@ -600,14 +570,10 @@ function grid(rows, palette, size, onPaint){
    ============================================================ */
 function syncSettings(){
   const cfg=loadCfg();
-  $("#provider").value = cfg.provider;
-  $("#model").value = cfg.model || DEFAULT_MODEL[cfg.provider];
-  $("#model").placeholder = DEFAULT_MODEL[cfg.provider];
+  $("#model").value = cfg.model || DEFAULT_MODEL;
+  $("#model").placeholder = DEFAULT_MODEL;
   $("#key").value = cfg.key;
-  $("#getKey").href = KEY_URL[cfg.provider];
-  $("#keyState").textContent = cfg.key
-    ? `using ${cfg.provider==="gemini"?"Gemini":"Claude"}, key saved`
-    : "no key saved yet";
+  $("#keyState").textContent = cfg.key ? "key saved" : "no key saved yet";
 }
 
 /* Settings take over the page while they are open, so the making flow below
@@ -629,17 +595,11 @@ function closeSettings(){
 $("#settingsBtn").addEventListener("click", ()=>{ settingsOpen() ? closeSettings() : openSettings(); });
 $("#closeSettings").addEventListener("click", closeSettings);
 
-$("#provider").addEventListener("change", e=>{
-  localStorage.setItem("af_provider", e.target.value);
-  localStorage.setItem("af_model", "");   // follow the new provider's default
-  syncSettings();
-});
 $("#saveKey").addEventListener("click", ()=>{
-  const provider = $("#provider").value, model = $("#model").value.trim();
-  localStorage.setItem("af_provider", provider);
+  const model = $("#model").value.trim();
   /* Save nothing when the box still holds the shipped default, so this browser
      keeps following the default as it moves rather than pinning today's name. */
-  localStorage.setItem("af_model", model === DEFAULT_MODEL[provider] ? "" : model);
+  localStorage.setItem("af_model", model === DEFAULT_MODEL ? "" : model);
   localStorage.setItem("af_key", $("#key").value.trim());
   syncSettings();
   $("#keyMsg").textContent = "Saved in this browser.";
@@ -986,7 +946,17 @@ function render(){
    ============================================================ */
 S.frames=[fallbackFrame()];
 $("#version").textContent = "v"+APP_VERSION;
+
+/* Clear what an older install may be carrying. Addonaut used to offer Anthropic
+   as a second provider, so a browser can still hold a provider flag, a Claude
+   model name, and an Anthropic key — and that key must never be posted to
+   Google's endpoint, so it goes rather than getting sent to the wrong company.
+   Losing it drops the player on the settings panel, which is where they can
+   paste a Gemini key. */
+localStorage.removeItem("af_provider");
 if(RETIRED_MODELS.includes(localStorage.getItem("af_model"))) localStorage.removeItem("af_model");
+if((localStorage.getItem("af_key")||"").startsWith("sk-ant-")) localStorage.removeItem("af_key");
+
 syncSettings();
 if(!loadCfg().key) openSettings();   // first run: the key is the only thing to do
 render();
