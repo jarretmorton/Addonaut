@@ -28,6 +28,9 @@
   .sm{font-size:13.5px}
 
   .head{display:flex;align-items:center;gap:16px;margin-bottom:24px;flex-wrap:wrap}
+  .head .grow{flex:1 1 200px}
+  .ver{font-size:12px;font-weight:700;letter-spacing:.02em;color:var(--dim);border:2px solid var(--line);padding:2px 6px;vertical-align:middle}
+  .ver:empty{display:none}
 
   .panel{border:2px solid var(--line);background:var(--panel);box-shadow:4px 4px 0 0 var(--ink);margin-bottom:24px}
   .panel > header{display:flex;align-items:center;gap:12px;padding:12px 20px;border-bottom:2px solid var(--line);background:var(--panel2)}
@@ -46,6 +49,9 @@
   .b-red{background:var(--redstone);color:#fff}
   .b-quiet{background:var(--panel2);color:var(--bone);border-color:var(--ink)}
   .b-sm{padding:6px 12px;font-size:13.5px;box-shadow:3px 3px 0 0 var(--ink)}
+  /* Header gear — the only way into AI settings, so it keeps a button's weight. */
+  .b-icon{background:var(--panel2);color:var(--bone);border-color:var(--line);padding:0;width:44px;height:44px;font-size:20px;line-height:1;flex:0 0 auto}
+  .b-icon.on{background:var(--gold);color:var(--ink);border-color:var(--ink)}
 
   input[type=text],input[type=password],input[type=number],textarea,select{
     font:inherit;background:var(--bg);color:var(--bone);border:2px solid var(--line);padding:10px;width:100%
@@ -99,7 +105,6 @@
   @keyframes p{50%{opacity:.2}}
   @media(prefers-reduced-motion:reduce){.spin{animation:none}}
 
-  details summary{cursor:pointer;padding:12px 20px;font-weight:700}
   .hide{display:none}
 </style>
 </head>
@@ -108,48 +113,55 @@
 
   <div class="head">
     <div id="logo"></div>
-    <div>
-      <h1>Addonaut</h1>
+    <div class="grow">
+      <h1>Addonaut <span id="version" class="ver"></span></h1>
       <p class="dim sm" style="margin:4px 0 0">Describe it, check it, paint it, export a real .mcaddon for Minecraft Bedrock.</p>
     </div>
+    <button id="settingsBtn" class="b-icon" type="button"
+            aria-controls="settings" aria-expanded="false" aria-label="AI settings" title="AI settings">⚙</button>
   </div>
 
   <div id="err" class="note err hide" style="margin-bottom:24px"></div>
 
-  <!-- SETTINGS -->
-  <div class="panel">
-    <details id="settings">
-      <summary>AI settings — <span id="keyState" class="dim" style="font-weight:400">no key saved yet</span></summary>
-      <div class="body" style="border-top:2px solid var(--line)">
-        <p class="sm dim">Your key stays in this browser only. It is never sent anywhere except straight to the provider you choose.</p>
+  <!-- SETTINGS — out of the making flow, behind the ⚙ button in the header. -->
+  <div id="settings" class="panel hide">
+    <header>
+      <h2>AI settings</h2>
+      <span id="keyState" class="sm dim" style="margin-left:auto">no key saved yet</span>
+    </header>
+    <div class="body">
+      <p class="sm dim">Your key stays in this browser only. It is never sent anywhere except straight to the provider you choose.</p>
 
-        <div class="grid2" style="margin:16px 0">
-          <label>
-            <span class="sm dim">Provider</span>
-            <select id="provider">
-              <option value="gemini">Google Gemini — has a free tier</option>
-              <option value="claude">Anthropic Claude — pay per use</option>
-            </select>
-          </label>
-          <label>
-            <span class="sm dim">Model</span>
-            <input type="text" id="model" spellcheck="false">
-          </label>
-        </div>
-
+      <div class="grid2" style="margin:16px 0">
         <label>
-          <span class="sm dim">API key</span>
-          <input type="password" id="key" spellcheck="false" autocomplete="off" placeholder="paste your key here">
+          <span class="sm dim">Provider</span>
+          <select id="provider">
+            <option value="gemini">Google Gemini — has a free tier</option>
+            <option value="claude">Anthropic Claude — pay per use</option>
+          </select>
         </label>
-
-        <div class="row" style="margin-top:16px">
-          <button id="saveKey">Save key</button>
-          <button id="clearKey" class="b-quiet">Forget key</button>
-          <a id="getKey" class="btn b-quiet b-sm" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Get a key</a>
-        </div>
-        <p id="keyMsg" class="sm gold" style="margin-top:12px"></p>
+        <label>
+          <span class="sm dim">Model</span>
+          <input type="text" id="model" spellcheck="false">
+        </label>
       </div>
-    </details>
+
+      <label>
+        <span class="sm dim">API key</span>
+        <input type="password" id="key" spellcheck="false" autocomplete="off" placeholder="paste your key here">
+      </label>
+
+      <div class="row" style="margin-top:16px">
+        <button id="saveKey">Save key</button>
+        <button id="clearKey" class="b-quiet">Forget key</button>
+        <a id="getKey" class="btn b-quiet b-sm" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Get a key</a>
+      </div>
+      <p id="keyMsg" class="sm gold" style="margin-top:12px"></p>
+
+      <div style="margin-top:16px;padding-top:16px;border-top:2px solid var(--line)">
+        <button id="closeSettings" class="b-gold">Done</button>
+      </div>
+    </div>
   </div>
 
   <div id="app"></div>
@@ -188,7 +200,19 @@ const S = {
   preview: 0
 };
 
-const DEFAULT_MODEL = { gemini: "gemini-2.5-flash", claude: "claude-sonnet-5" };
+/* Version — single source of truth, shown in the header. Bump on release. */
+const APP_VERSION = "0.1.0";
+
+/* gemini-3.8-flash is the newest Flash model on Google's free tier (released
+   2026-09-02). Model names go stale fast; the Model box in AI settings is
+   editable, and a 404 from Google says exactly that in the error. */
+const DEFAULT_MODEL = { gemini: "gemini-3.8-flash", claude: "claude-sonnet-5" };
+
+/* Model ids this app once prefilled into that box. A saved value matching one
+   was the default of the day rather than a deliberate choice, so it is cleared
+   at boot. An empty saved model means "follow whatever the default is now". */
+const RETIRED_MODELS = ["gemini-2.5-flash"];
+
 const KEY_URL = {
   gemini: "https://aistudio.google.com/apikey",
   claude: "https://console.anthropic.com/settings/keys"
@@ -412,7 +436,7 @@ const num=(v,d)=> (typeof v==="number" && isFinite(v)) ? v : d;
    ============================================================ */
 async function ask(prompt){
   const cfg = loadCfg();
-  if(!cfg.key) throw new Error("Add an API key in AI settings first.");
+  if(!cfg.key) throw settingsProblem("Add an API key first — the ⚙ button at the top opens AI settings.");
   const model = cfg.model || DEFAULT_MODEL[cfg.provider];
   let res, text;
 
@@ -426,7 +450,7 @@ async function ask(prompt){
           generationConfig:{temperature:1, maxOutputTokens:2000, responseMimeType:"application/json"}
         })
       });
-    if(!res.ok) throw new Error(await explain(res, "Gemini"));
+    if(!res.ok) throw await explain(res, "Gemini");
     const d = await res.json();
     text = (d.candidates?.[0]?.content?.parts||[]).map(p=>p.text||"").join("");
   } else {
@@ -440,7 +464,7 @@ async function ask(prompt){
       },
       body: JSON.stringify({model, max_tokens:1500, messages:[{role:"user",content:prompt}]})
     });
-    if(!res.ok) throw new Error(await explain(res, "Claude"));
+    if(!res.ok) throw await explain(res, "Claude");
     const d = await res.json();
     text = (d.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("");
   }
@@ -451,13 +475,21 @@ async function ask(prompt){
   return JSON.parse(clean.slice(a, b+1));
 }
 
+/* Marks an error the player can only fix in AI settings, so the caller can open
+   that panel for them — it is tucked behind the header gear now, not on screen. */
+function settingsProblem(msg){
+  const e = new Error(msg);
+  e.settings = true;
+  return e;
+}
+
 async function explain(res, who){
   let detail = "";
   try { const j = await res.json(); detail = j.error?.message || ""; } catch {}
-  if(res.status===401 || res.status===403) return `${who} rejected the key. Check it in AI settings.`;
-  if(res.status===429) return `${who} is rate limiting you. Wait a minute and try again.`;
-  if(res.status===404) return `${who} doesn't know that model name. Change it in AI settings.`;
-  return `${who} returned ${res.status}. ${detail}`.trim();
+  if(res.status===401 || res.status===403) return settingsProblem(`${who} rejected the key. Check it in AI settings.`);
+  if(res.status===429) return new Error(`${who} is rate limiting you. Wait a minute and try again.`);
+  if(res.status===404) return settingsProblem(`${who} doesn't know that model name. Change it in AI settings.`);
+  return new Error(`${who} returned ${res.status}. ${detail}`.trim());
 }
 
 const SPEC_PROMPT = (desc, hint) => `You plan Minecraft Bedrock Edition add-ons for a generator that builds exactly five things:
@@ -577,14 +609,37 @@ function syncSettings(){
     ? `using ${cfg.provider==="gemini"?"Gemini":"Claude"}, key saved`
     : "no key saved yet";
 }
+
+/* Settings take over the page while they are open, so the making flow below
+   never has a half-filled key form sitting on top of it. */
+function settingsOpen(){ return !$("#settings").classList.contains("hide"); }
+function openSettings(){
+  $("#settings").classList.remove("hide");
+  $("#app").classList.add("hide");
+  $("#settingsBtn").classList.add("on");
+  $("#settingsBtn").setAttribute("aria-expanded","true");
+  window.scrollTo(0,0);
+}
+function closeSettings(){
+  $("#settings").classList.add("hide");
+  $("#app").classList.remove("hide");
+  $("#settingsBtn").classList.remove("on");
+  $("#settingsBtn").setAttribute("aria-expanded","false");
+}
+$("#settingsBtn").addEventListener("click", ()=>{ settingsOpen() ? closeSettings() : openSettings(); });
+$("#closeSettings").addEventListener("click", closeSettings);
+
 $("#provider").addEventListener("change", e=>{
   localStorage.setItem("af_provider", e.target.value);
-  localStorage.setItem("af_model", DEFAULT_MODEL[e.target.value]);
+  localStorage.setItem("af_model", "");   // follow the new provider's default
   syncSettings();
 });
 $("#saveKey").addEventListener("click", ()=>{
-  localStorage.setItem("af_provider", $("#provider").value);
-  localStorage.setItem("af_model", $("#model").value.trim());
+  const provider = $("#provider").value, model = $("#model").value.trim();
+  localStorage.setItem("af_provider", provider);
+  /* Save nothing when the box still holds the shipped default, so this browser
+     keeps following the default as it moves rather than pinning today's name. */
+  localStorage.setItem("af_model", model === DEFAULT_MODEL[provider] ? "" : model);
   localStorage.setItem("af_key", $("#key").value.trim());
   syncSettings();
   $("#keyMsg").textContent = "Saved in this browser.";
@@ -639,6 +694,7 @@ async function runCheck(){
   }catch(e){
     showError(e.message||"Something went wrong.");
     S.stage="describe";
+    if(e.settings) openSettings();   // nothing to fix on the flow itself
   }
   render();
 }
@@ -929,8 +985,10 @@ function render(){
    12. BOOT
    ============================================================ */
 S.frames=[fallbackFrame()];
+$("#version").textContent = "v"+APP_VERSION;
+if(RETIRED_MODELS.includes(localStorage.getItem("af_model"))) localStorage.removeItem("af_model");
 syncSettings();
-if(!loadCfg().key) $("#settings").open = true;
+if(!loadCfg().key) openSettings();   // first run: the key is the only thing to do
 render();
 
 // gentle logo animation
