@@ -1,0 +1,942 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Addonaut — add-on maker for Minecraft Bedrock</title>
+<meta name="description" content="Describe a Minecraft Bedrock add-on, check it works, paint the texture, export a real .mcaddon.">
+<meta name="theme-color" content="#16191d">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%2316191d'/><rect x='3' y='3' width='10' height='10' fill='%236aa84f'/><rect x='5' y='5' width='3' height='3' fill='%23e0a63c'/></svg>">
+<style>
+  :root{
+    --bg:#16191d; --panel:#22272e; --panel2:#2c333c; --line:#414c58;
+    --bone:#e6e2d6; --dim:#8d99a6; --grass:#6aa84f; --gold:#e0a63c; --redstone:#c0392b; --ink:#0e1116;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--bone); min-height:100vh;
+    font-family:Verdana,"DejaVu Sans",system-ui,sans-serif; font-size:15px; line-height:1.5;
+    padding:24px 16px calc(48px + env(safe-area-inset-bottom));
+  }
+  .wrap{max-width:760px;margin:0 auto}
+  h1{font-size:28px;margin:0;line-height:1.1}
+  h2{font-size:18px;margin:0}
+  p{margin:0 0 8px}
+  .dim{color:var(--dim)}
+  .gold{color:var(--gold)}
+  .sm{font-size:13.5px}
+
+  .head{display:flex;align-items:center;gap:16px;margin-bottom:24px;flex-wrap:wrap}
+
+  .panel{border:2px solid var(--line);background:var(--panel);box-shadow:4px 4px 0 0 var(--ink);margin-bottom:24px}
+  .panel > header{display:flex;align-items:center;gap:12px;padding:12px 20px;border-bottom:2px solid var(--line);background:var(--panel2)}
+  .step{width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;background:var(--gold);color:var(--ink);flex:0 0 auto}
+  .body{padding:20px}
+
+  button,.btn{
+    font:inherit;font-weight:700;border:2px solid var(--ink);padding:12px 20px;cursor:pointer;
+    box-shadow:4px 4px 0 0 var(--ink);background:var(--grass);color:var(--ink);
+    text-decoration:none;display:inline-block;
+  }
+  button:active,.btn:active{transform:translate(4px,4px);box-shadow:none}
+  button:disabled{opacity:.4;cursor:default;transform:none}
+  button:focus-visible,.btn:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:3px solid var(--gold);outline-offset:2px}
+  .b-gold{background:var(--gold)}
+  .b-red{background:var(--redstone);color:#fff}
+  .b-quiet{background:var(--panel2);color:var(--bone);border-color:var(--ink)}
+  .b-sm{padding:6px 12px;font-size:13.5px;box-shadow:3px 3px 0 0 var(--ink)}
+
+  input[type=text],input[type=password],input[type=number],textarea,select{
+    font:inherit;background:var(--bg);color:var(--bone);border:2px solid var(--line);padding:10px;width:100%
+  }
+  textarea{resize:vertical}
+  label{display:block}
+  .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+  .grid2{display:grid;gap:12px;grid-template-columns:1fr}
+  @media(min-width:520px){.grid2{grid-template-columns:1fr 1fr}}
+
+  .choice{text-align:left;background:var(--panel2);border:2px solid var(--line);color:var(--bone);padding:16px;font-weight:400;width:100%}
+  .choice b{display:block;color:var(--gold);font-size:15px}
+
+  .note{border:2px solid var(--line);padding:12px;font-size:13.5px}
+  .note.err{border-color:var(--redstone);background:#2b1d1d}
+  .note.ok{border-color:var(--grass);background:#1d2a1d}
+  .note.warn{border-color:var(--gold);background:#2a2418}
+
+  .tag{padding:4px 8px;font-weight:700;font-size:13px;color:var(--ink);flex:0 0 auto}
+
+  /* pixel canvas */
+  .canvas{
+    display:inline-block;border:2px solid var(--ink);touch-action:none;user-select:none;line-height:0;
+    background-color:#2b3037;
+    background-image:linear-gradient(45deg,#3a3f47 25%,transparent 25%),linear-gradient(-45deg,#3a3f47 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#3a3f47 75%),linear-gradient(-45deg,transparent 75%,#3a3f47 75%);
+    background-size:12px 12px;background-position:0 0,0 6px,6px -6px,-6px 0;
+  }
+  .canvas .r{display:flex}
+  .canvas .c{box-shadow:inset 0 0 0 .5px rgba(0,0,0,.18)}
+  .canvas.paint .c{cursor:crosshair}
+  .canvas.flat .c{box-shadow:none}
+
+  .swatch{position:relative;width:40px;height:40px;border:2px solid var(--ink);box-shadow:4px 4px 0 0 var(--ink);cursor:pointer;padding:0;display:block}
+  .swatch.on{border-color:var(--gold)}
+  .swatch input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;padding:0;border:0}
+
+  .opt{display:flex;gap:12px;flex-wrap:wrap;align-items:center;padding:12px;border:2px solid var(--line);background:var(--panel2);margin-bottom:12px}
+  .opt.yes{border-color:var(--grass)}
+  .opt.no{opacity:.55}
+  .opt .t{flex:1 1 200px}
+
+  .slider{width:100%;accent-color:var(--gold)}
+  .between{display:flex;justify-content:space-between;font-size:13.5px;margin-bottom:2px}
+
+  .frame{position:relative;display:inline-block}
+  .frame > button.pick{padding:0;border:2px solid var(--ink);box-shadow:none;background:none}
+  .frame > button.pick.on{border-color:var(--gold)}
+  .frame .x{position:absolute;top:-8px;right:-8px;width:20px;height:20px;padding:0;font-size:12px;box-shadow:none}
+
+  .spin{width:14px;height:14px;background:var(--grass);animation:p 1s steps(2) infinite}
+  @keyframes p{50%{opacity:.2}}
+  @media(prefers-reduced-motion:reduce){.spin{animation:none}}
+
+  details summary{cursor:pointer;padding:12px 20px;font-weight:700}
+  .hide{display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="head">
+    <div id="logo"></div>
+    <div>
+      <h1>Addonaut</h1>
+      <p class="dim sm" style="margin:4px 0 0">Describe it, check it, paint it, export a real .mcaddon for Minecraft Bedrock.</p>
+    </div>
+  </div>
+
+  <div id="err" class="note err hide" style="margin-bottom:24px"></div>
+
+  <!-- SETTINGS -->
+  <div class="panel">
+    <details id="settings">
+      <summary>AI settings — <span id="keyState" class="dim" style="font-weight:400">no key saved yet</span></summary>
+      <div class="body" style="border-top:2px solid var(--line)">
+        <p class="sm dim">Your key stays in this browser only. It is never sent anywhere except straight to the provider you choose.</p>
+
+        <div class="grid2" style="margin:16px 0">
+          <label>
+            <span class="sm dim">Provider</span>
+            <select id="provider">
+              <option value="gemini">Google Gemini — has a free tier</option>
+              <option value="claude">Anthropic Claude — pay per use</option>
+            </select>
+          </label>
+          <label>
+            <span class="sm dim">Model</span>
+            <input type="text" id="model" spellcheck="false">
+          </label>
+        </div>
+
+        <label>
+          <span class="sm dim">API key</span>
+          <input type="password" id="key" spellcheck="false" autocomplete="off" placeholder="paste your key here">
+        </label>
+
+        <div class="row" style="margin-top:16px">
+          <button id="saveKey">Save key</button>
+          <button id="clearKey" class="b-quiet">Forget key</button>
+          <a id="getKey" class="btn b-quiet b-sm" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Get a key</a>
+        </div>
+        <p id="keyMsg" class="sm gold" style="margin-top:12px"></p>
+      </div>
+    </details>
+  </div>
+
+  <div id="app"></div>
+
+  <footer class="sm dim" style="margin-top:40px;padding-top:20px;border-top:2px solid var(--line)">
+    Addonaut is not an official Minecraft product. Not approved by or associated with Mojang
+    or Microsoft. Minecraft is a trademark of Mojang Synergies AB.
+  </footer>
+
+</div>
+
+<script>
+"use strict";
+
+/* ============================================================
+   1. STATE
+   ============================================================ */
+const S = {
+  stage: "kind",              // kind | describe | busy | studio
+  kindHint: "auto",
+  desc: "",
+  busyMsg: "",
+  spec: null,
+  palette: ["#3d4a5c","#5a6b80","#7d8fa3","#a8b6c4","#252d38","#c8a24a"],
+  frames: [],
+  frameIdx: 0,
+  brush: 0,
+  erasing: false,
+  animate: false,
+  tpf: 10,
+  props: {},
+  decided: {},
+  showEditor: false,
+  saved: "",
+  fileLink: null,
+  preview: 0
+};
+
+const DEFAULT_MODEL = { gemini: "gemini-2.5-flash", claude: "claude-sonnet-5" };
+const KEY_URL = {
+  gemini: "https://aistudio.google.com/apikey",
+  claude: "https://console.anthropic.com/settings/keys"
+};
+
+function loadCfg(){
+  return {
+    provider: localStorage.getItem("af_provider") || "gemini",
+    model: localStorage.getItem("af_model") || "",
+    key: localStorage.getItem("af_key") || ""
+  };
+}
+
+/* ============================================================
+   2. ZIP WRITER  (store method — no compression needed)
+   ============================================================ */
+const CRC = (()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0}return t})();
+function crc32(b){let c=0xFFFFFFFF;for(let i=0;i<b.length;i++)c=CRC[(c^b[i])&255]^(c>>>8);return (c^0xFFFFFFFF)>>>0}
+
+function makeZip(files){
+  const te=new TextEncoder(), parts=[], cds=[]; let off=0;
+  for(const f of files){
+    const nb=te.encode(f.name), d=f.data, crc=crc32(d);
+    const lh=new Uint8Array(30+nb.length), v=new DataView(lh.buffer);
+    v.setUint32(0,0x04034b50,true); v.setUint16(4,20,true);
+    v.setUint32(14,crc,true); v.setUint32(18,d.length,true); v.setUint32(22,d.length,true);
+    v.setUint16(26,nb.length,true);
+    lh.set(nb,30); parts.push(lh,d);
+
+    const cd=new Uint8Array(46+nb.length), c=new DataView(cd.buffer);
+    c.setUint32(0,0x02014b50,true); c.setUint16(4,20,true); c.setUint16(6,20,true);
+    c.setUint32(16,crc,true); c.setUint32(20,d.length,true); c.setUint32(24,d.length,true);
+    c.setUint16(28,nb.length,true); c.setUint32(42,off,true);
+    cd.set(nb,46); cds.push(cd);
+
+    off += lh.length + d.length;
+  }
+  const cdSize=cds.reduce((a,b)=>a+b.length,0);
+  const e=new Uint8Array(22), ev=new DataView(e.buffer);
+  ev.setUint32(0,0x06054b50,true); ev.setUint16(8,files.length,true); ev.setUint16(10,files.length,true);
+  ev.setUint32(12,cdSize,true); ev.setUint32(16,off,true);
+  return new Blob([...parts,...cds,e],{type:"application/zip"});
+}
+
+/* ============================================================
+   3. PIXELS -> PNG
+   ============================================================ */
+function framesToPng(frames, palette){
+  const cv=document.createElement("canvas");
+  cv.width=16; cv.height=16*frames.length;
+  const x=cv.getContext("2d");
+  x.clearRect(0,0,cv.width,cv.height);
+  frames.forEach((rows,fi)=>rows.forEach((row,y)=>{
+    for(let i=0;i<16;i++){
+      const ch=row[i];
+      if(!ch||ch===".") continue;
+      x.fillStyle = palette[parseInt(ch,16)] || "#ff00ff";
+      x.fillRect(i, fi*16+y, 1, 1);
+    }
+  }));
+  const b=atob(cv.toDataURL("image/png").split(",")[1]);
+  const out=new Uint8Array(b.length);
+  for(let i=0;i<b.length;i++) out[i]=b.charCodeAt(i);
+  return out;
+}
+
+/* ============================================================
+   4. ADD-ON BUILDER
+   ============================================================ */
+const TE=new TextEncoder();
+const J=o=>TE.encode(JSON.stringify(o,null,2));
+const T=s=>TE.encode(s);
+const uuid=()=> (crypto.randomUUID ? crypto.randomUUID()
+  : "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g,c=>{
+      const r=Math.random()*16|0; return (c==="x"?r:(r&3|8)).toString(16);
+    }));
+
+function buildAddon(o){
+  const id=`custom:${o.identifier}`, F=o.identifier, files=[];
+  const bp=uuid(), bpm=uuid(), rp=uuid(), rpm=uuid();
+  const png=framesToPng(o.animate?o.frames:[o.frames[0]], o.palette);
+  const lang=[];
+
+  const man=(n,u,m,type,dep)=>({
+    format_version:2,
+    header:{name:n,description:o.description,uuid:u,version:[1,0,0],min_engine_version:[1,20,60]},
+    modules:[{type,uuid:m,version:[1,0,0]}],
+    dependencies:[{uuid:dep,version:[1,0,0]}]
+  });
+  files.push({name:`${F}_BP/manifest.json`,data:J(man(`${o.name} (Behavior)`,bp,bpm,"data",rp))});
+  files.push({name:`${F}_RP/manifest.json`,data:J(man(`${o.name} (Resources)`,rp,rpm,"resources",bp))});
+
+  const P=o.props;
+
+  if(o.kind==="block"){
+    files.push({name:`${F}_BP/blocks/${F}.json`,data:J({
+      format_version:"1.20.60",
+      "minecraft:block":{
+        description:{identifier:id,menu_category:{category:"construction"}},
+        components:{
+          "minecraft:destructible_by_mining":{seconds_to_destroy:num(P.hardness,1.5)},
+          "minecraft:destructible_by_explosion":{explosion_resistance:num(P.resistance,3)},
+          "minecraft:friction":num(P.friction,0.6),
+          "minecraft:light_emission":Math.max(0,Math.min(15,Math.round(num(P.luminance,0)))),
+          "minecraft:geometry":"minecraft:geometry.full_block",
+          "minecraft:material_instances":{"*":{texture:F,render_method:"opaque"}}
+        }
+      }
+    })});
+    files.push({name:`${F}_RP/textures/blocks/${F}.png`,data:png});
+    files.push({name:`${F}_RP/textures/terrain_texture.json`,data:J({
+      resource_pack_name:F,texture_name:"atlas.terrain",padding:8,num_mip_levels:4,
+      texture_data:{[F]:{textures:`textures/blocks/${F}`}}
+    })});
+    if(o.animate && o.frames.length>1){
+      files.push({name:`${F}_RP/textures/flipbook_textures.json`,data:J([
+        {flipbook_texture:`textures/blocks/${F}`,atlas_tile:F,ticks_per_frame:o.ticksPerFrame}
+      ])});
+    }
+    lang.push(`tile.${id}.name=${o.name}`);
+  }
+
+  if(o.kind==="item"||o.kind==="food"||o.kind==="tool"){
+    const c={
+      "minecraft:icon":{texture:F},
+      "minecraft:display_name":{value:o.name},
+      "minecraft:max_stack_size": o.kind==="tool" ? 1 : num(P.stackSize,64)
+    };
+    if(o.kind==="food"){
+      c["minecraft:food"]={nutrition:num(P.nutrition,4),saturation_modifier:num(P.saturation,.6),can_always_eat:!!P.canAlwaysEat};
+      c["minecraft:use_modifiers"]={use_duration:num(P.useDuration,1.6),movement_modifier:.35};
+      c["minecraft:use_animation"]="eat";
+    }
+    if(o.kind==="tool"){
+      c["minecraft:durability"]={max_durability:num(P.durability,250)};
+      c["minecraft:damage"]={value:num(P.damage,6)};
+      c["minecraft:hand_equipped"]=true;
+      c["minecraft:enchantable"]={value:num(P.enchantability,10),slot:"sword"};
+    }
+    files.push({name:`${F}_BP/items/${F}.json`,data:J({
+      format_version:"1.20.60",
+      "minecraft:item":{
+        description:{identifier:id,menu_category:{category:o.kind==="tool"?"equipment":"items"}},
+        components:c
+      }
+    })});
+    files.push({name:`${F}_RP/textures/items/${F}.png`,data:png});
+    files.push({name:`${F}_RP/textures/item_texture.json`,data:J({
+      resource_pack_name:F,texture_name:"atlas.items",
+      texture_data:{[F]:{textures:`textures/items/${F}`}}
+    })});
+    lang.push(`item.${id}.name=${o.name}`);
+  }
+
+  if(o.kind==="mob"){
+    const hostile=!!P.hostile, hp=num(P.health,10);
+    const c={
+      "minecraft:type_family":{family:[F,"mob",hostile?"monster":"passive"]},
+      "minecraft:health":{value:hp,max:hp},
+      "minecraft:movement":{value:num(P.speed,.25)},
+      "minecraft:scale":{value:num(P.scale,1)},
+      "minecraft:physics":{}, "minecraft:jump.static":{}, "minecraft:movement.basic":{},
+      "minecraft:navigation.walk":{can_path_over_water:true,avoid_water:true},
+      "minecraft:collision_box":{width:.7,height:.8},
+      "minecraft:nameable":{},
+      "minecraft:behavior.float":{priority:0},
+      "minecraft:behavior.random_stroll":{priority:6,speed_multiplier:1},
+      "minecraft:behavior.look_at_player":{priority:7,look_distance:6},
+      "minecraft:behavior.random_look_around":{priority:8}
+    };
+    if(hostile){
+      c["minecraft:attack"]={damage:num(P.attackDamage,3)};
+      c["minecraft:behavior.melee_attack"]={priority:2,speed_multiplier:1.2};
+      c["minecraft:behavior.nearest_attackable_target"]={priority:1,must_see:true,
+        entity_types:[{filters:{test:"is_family",subject:"other",value:"player"},max_dist:16}]};
+    } else {
+      c["minecraft:behavior.panic"]={priority:1,speed_multiplier:1.5};
+    }
+    files.push({name:`${F}_BP/entities/${F}.json`,data:J({
+      format_version:"1.20.60",
+      "minecraft:entity":{description:{identifier:id,is_spawnable:true,is_summonable:true},components:c}
+    })});
+    files.push({name:`${F}_RP/entity/${F}.entity.json`,data:J({
+      format_version:"1.10.0",
+      "minecraft:client_entity":{description:{
+        identifier:id,
+        materials:{default:"entity_alphatest"},
+        textures:{default:`textures/entity/${F}`},
+        geometry:{default:`geometry.${F}`},
+        render_controllers:[`controller.render.${F}`],
+        spawn_egg:{base_color:o.palette[0]||"#88aabb",overlay_color:o.palette[1]||"#334455"}
+      }}
+    })});
+    files.push({name:`${F}_RP/models/entity/${F}.geo.json`,data:J({
+      format_version:"1.12.0",
+      "minecraft:geometry":[{
+        description:{identifier:`geometry.${F}`,texture_width:16,texture_height:16,
+          visible_bounds_width:2,visible_bounds_height:2,visible_bounds_offset:[0,.5,0]},
+        bones:[{name:"body",pivot:[0,0,0],cubes:[{origin:[-5,0,-5],size:[10,10,10],uv:[0,0]}]}]
+      }]
+    })});
+    files.push({name:`${F}_RP/render_controllers/${F}.rc.json`,data:J({
+      format_version:"1.10.0",
+      render_controllers:{[`controller.render.${F}`]:{
+        geometry:"Geometry.default",materials:[{"*":"Material.default"}],textures:["Texture.default"]
+      }}
+    })});
+    files.push({name:`${F}_RP/textures/entity/${F}.png`,data:png});
+    lang.push(`entity.${id}.name=${o.name}`);
+    lang.push(`item.spawn_egg.entity.${id}.name=Spawn ${o.name}`);
+  }
+
+  files.push({name:`${F}_RP/texts/en_US.lang`,data:T(lang.join("\n")+"\n")});
+  files.push({name:`${F}_RP/texts/languages.json`,data:J(["en_US"])});
+  return makeZip(files);
+}
+const num=(v,d)=> (typeof v==="number" && isFinite(v)) ? v : d;
+
+/* ============================================================
+   5. AI CALLS — one shape, two providers
+   ============================================================ */
+async function ask(prompt){
+  const cfg = loadCfg();
+  if(!cfg.key) throw new Error("Add an API key in AI settings first.");
+  const model = cfg.model || DEFAULT_MODEL[cfg.provider];
+  let res, text;
+
+  if(cfg.provider === "gemini"){
+    res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+      { method:"POST",
+        headers:{"content-type":"application/json","x-goog-api-key":cfg.key},
+        body: JSON.stringify({
+          contents:[{parts:[{text:prompt}]}],
+          generationConfig:{temperature:1, maxOutputTokens:2000, responseMimeType:"application/json"}
+        })
+      });
+    if(!res.ok) throw new Error(await explain(res, "Gemini"));
+    const d = await res.json();
+    text = (d.candidates?.[0]?.content?.parts||[]).map(p=>p.text||"").join("");
+  } else {
+    res = await fetch("https://api.anthropic.com/v1/messages",{
+      method:"POST",
+      headers:{
+        "content-type":"application/json",
+        "x-api-key":cfg.key,
+        "anthropic-version":"2023-06-01",
+        "anthropic-dangerous-direct-browser-access":"true"
+      },
+      body: JSON.stringify({model, max_tokens:1500, messages:[{role:"user",content:prompt}]})
+    });
+    if(!res.ok) throw new Error(await explain(res, "Claude"));
+    const d = await res.json();
+    text = (d.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("");
+  }
+
+  const clean = text.replace(/```json/gi,"").replace(/```/g,"").trim();
+  const a = clean.indexOf("{"), b = clean.lastIndexOf("}");
+  if(a < 0) throw new Error("The model replied with something that wasn't JSON. Try again.");
+  return JSON.parse(clean.slice(a, b+1));
+}
+
+async function explain(res, who){
+  let detail = "";
+  try { const j = await res.json(); detail = j.error?.message || ""; } catch {}
+  if(res.status===401 || res.status===403) return `${who} rejected the key. Check it in AI settings.`;
+  if(res.status===429) return `${who} is rate limiting you. Wait a minute and try again.`;
+  if(res.status===404) return `${who} doesn't know that model name. Change it in AI settings.`;
+  return `${who} returned ${res.status}. ${detail}`.trim();
+}
+
+const SPEC_PROMPT = (desc, hint) => `You plan Minecraft Bedrock Edition add-ons for a generator that builds exactly five things:
+block (a full solid cube, one texture on all sides), item (plain inventory item), food (edible item), tool (weapon/tool with durability and damage), mob (simple cube-shaped creature, passive or hostile).
+
+It CANNOT do: custom 3D models beyond a cube, crafting recipes, GUIs, structures, dimensions, scripting, ore generation, armour, or anything Java-only.
+
+Player's request: "${desc}"
+${hint && hint!=="auto" ? `They chose the kind: ${hint}` : "Pick the best kind yourself."}
+
+Reply with ONLY a JSON object, no markdown fence, no preamble:
+{
+ "compatible": true or false,
+ "kind": "block"|"item"|"food"|"tool"|"mob",
+ "name": "Title Case Name",
+ "identifier": "snake_case_id",
+ "verdict": "2 friendly sentences saying what gets built",
+ "unsupported": ["short phrases for requested parts this generator can't do; empty array if none"],
+ "props": { only keys for that kind },
+ "options": [ 4 or 5 of {"id":"kebab-id","label":"short toggle name","detail":"one short line on what it changes","recommended":true|false,"patch":{"propKey":value}} ]
+}
+
+props keys by kind:
+block -> hardness, resistance, luminance (0-15), friction (0-1)
+item -> stackSize
+food -> nutrition (1-20), saturation (0-2), useDuration, canAlwaysEat (bool)
+tool -> durability, damage, enchantability
+mob -> health, speed (0.1-0.6), scale, hostile (bool), attackDamage
+
+Each option's patch may only set keys from that kind's list. Set compatible:false only if nothing buildable can be salvaged.`;
+
+const ART_PROMPT = (kind,name,desc) => `Design a 16x16 Minecraft Bedrock texture for a ${kind} called "${name}". The player described it as: "${desc}"
+
+Reply with ONLY this JSON, no markdown fence:
+{"palette":["#rrggbb", 4 to 10 colours],"pixels":["................", exactly 16 strings of exactly 16 characters]}
+
+Each character is a lowercase hex digit 0-f indexing into palette, or "." for transparent.
+A block texture must be fully opaque with no "." and should tile seamlessly. An item, tool or mob texture uses "." for the background around the shape. Use at least 3 shades for depth, never a flat single-colour fill. Match Minecraft's chunky high-contrast pixel style.`;
+
+/* ============================================================
+   6. TEXTURE HELPERS
+   ============================================================ */
+const blankFrame = ()=> Array.from({length:16},()=>".".repeat(16));
+const fallbackFrame = ()=> Array.from({length:16},(_,y)=>
+  Array.from({length:16},(_,x)=>
+    (x===0||y===0||x===15||y===15) ? "4" : String((x*7+y*13+(x*y)%5)%4)
+  ).join(""));
+
+/* ============================================================
+   7. DOM HELPERS
+   ============================================================ */
+const $ = s => document.querySelector(s);
+function el(tag, attrs, ...kids){
+  const n=document.createElement(tag);
+  for(const k in (attrs||{})){
+    const v=attrs[k];
+    if(k==="class") n.className=v;
+    else if(k==="html") n.innerHTML=v;
+    else if(k.startsWith("on")) n.addEventListener(k.slice(2), v);
+    else if(v!==null && v!==undefined && v!==false) n.setAttribute(k, v);
+  }
+  kids.flat().forEach(c=>{ if(c==null||c===false) return; n.append(c.nodeType?c:document.createTextNode(c)); });
+  return n;
+}
+function panel(step, title, ...kids){
+  const p = el("div",{class:"panel"});
+  if(title) p.append(el("header",{}, step?el("span",{class:"step"},step):null, el("h2",{},title)));
+  p.append(el("div",{class:"body"}, ...kids));
+  return p;
+}
+function btn(label, on, cls){
+  return el("button",{class:cls||"", onclick:on}, label);
+}
+function showError(msg){
+  const e=$("#err");
+  if(!msg){ e.classList.add("hide"); return; }
+  e.textContent=msg; e.classList.remove("hide");
+  e.scrollIntoView({block:"nearest"});
+}
+
+/* pixel grid element */
+function grid(rows, palette, size, onPaint){
+  const g = el("div",{class:"canvas"+(onPaint?" paint":"")+(size<8?" flat":"")});
+  let down=false;
+  const stop=()=>down=false;
+  window.addEventListener("pointerup",stop);
+  rows.forEach((row,y)=>{
+    const r=el("div",{class:"r"});
+    for(let x=0;x<16;x++){
+      const ch=row[x]||".";
+      const c=el("div",{class:"c"});
+      c.style.width=size+"px"; c.style.height=size+"px";
+      c.style.background = ch==="." ? "transparent" : (palette[parseInt(ch,16)]||"#ff00ff");
+      if(onPaint){
+        const put=()=>{ onPaint(x,y,c); };
+        c.addEventListener("pointerdown",e=>{ e.preventDefault(); down=true; put(); });
+        c.addEventListener("pointerenter",()=>{ if(down) put(); });
+      }
+      r.append(c);
+    }
+    g.append(r);
+  });
+  return g;
+}
+
+/* ============================================================
+   8. SETTINGS PANEL WIRING
+   ============================================================ */
+function syncSettings(){
+  const cfg=loadCfg();
+  $("#provider").value = cfg.provider;
+  $("#model").value = cfg.model || DEFAULT_MODEL[cfg.provider];
+  $("#model").placeholder = DEFAULT_MODEL[cfg.provider];
+  $("#key").value = cfg.key;
+  $("#getKey").href = KEY_URL[cfg.provider];
+  $("#keyState").textContent = cfg.key
+    ? `using ${cfg.provider==="gemini"?"Gemini":"Claude"}, key saved`
+    : "no key saved yet";
+}
+$("#provider").addEventListener("change", e=>{
+  localStorage.setItem("af_provider", e.target.value);
+  localStorage.setItem("af_model", DEFAULT_MODEL[e.target.value]);
+  syncSettings();
+});
+$("#saveKey").addEventListener("click", ()=>{
+  localStorage.setItem("af_provider", $("#provider").value);
+  localStorage.setItem("af_model", $("#model").value.trim());
+  localStorage.setItem("af_key", $("#key").value.trim());
+  syncSettings();
+  $("#keyMsg").textContent = "Saved in this browser.";
+  setTimeout(()=>$("#keyMsg").textContent="", 3000);
+});
+$("#clearKey").addEventListener("click", ()=>{
+  localStorage.removeItem("af_key");
+  syncSettings();
+  $("#keyMsg").textContent = "Key removed.";
+  setTimeout(()=>$("#keyMsg").textContent="", 3000);
+});
+
+/* ============================================================
+   9. ACTIONS
+   ============================================================ */
+const KINDS = [
+  ["block","A block","Something you place and mine"],
+  ["item","An item","Sits in your inventory"],
+  ["food","Food","Something you can eat"],
+  ["tool","A tool or weapon","Has durability and damage"],
+  ["mob","A creature","Cube-shaped, walks around"],
+  ["auto","Not sure yet","Let the AI decide from your idea"]
+];
+
+async function runCheck(){
+  showError("");
+  S.saved=""; S.fileLink=null;
+  S.stage="busy"; S.busyMsg="Checking your idea against what Bedrock can do…"; render();
+  try{
+    const spec = await ask(SPEC_PROMPT(S.desc, S.kindHint));
+    if(!spec.kind || !spec.identifier) throw new Error("The plan came back incomplete. Try describing it again.");
+    spec.identifier = String(spec.identifier).toLowerCase().replace(/[^a-z0-9_]/g,"_").slice(0,30) || "my_creation";
+    spec.options = Array.isArray(spec.options) ? spec.options : [];
+    spec.unsupported = Array.isArray(spec.unsupported) ? spec.unsupported : [];
+    S.spec = spec;
+    S.props = Object.assign({}, spec.props||{});
+    S.decided = {};
+    spec.options.forEach(o=>S.decided[o.id]=null);
+
+    S.busyMsg="Drawing the texture…"; render();
+    try{
+      const art = await ask(ART_PROMPT(spec.kind, spec.name, S.desc));
+      const pal = Array.isArray(art.palette)&&art.palette.length ? art.palette.slice(0,16) : S.palette;
+      let px = Array.isArray(art.pixels) ? art.pixels.slice(0,16).map(r=>String(r).slice(0,16).padEnd(16,".")) : [];
+      while(px.length<16) px.push(".".repeat(16));
+      S.palette = pal; S.frames=[px];
+    }catch{
+      S.frames=[fallbackFrame()];
+    }
+    S.frameIdx=0; S.brush=0; S.erasing=false; S.animate=false; S.showEditor=false;
+    S.stage="studio";
+  }catch(e){
+    showError(e.message||"Something went wrong.");
+    S.stage="describe";
+  }
+  render();
+}
+
+function currentBlob(){
+  return buildAddon({
+    kind:S.spec.kind, name:S.spec.name, identifier:S.spec.identifier,
+    description:S.spec.verdict||S.desc, props:S.props,
+    frames:S.frames, palette:S.palette,
+    animate: S.animate && S.frames.length>1 && S.spec.kind==="block",
+    ticksPerFrame:S.tpf
+  });
+}
+
+function saveFile(){
+  showError(""); S.saved=""; S.fileLink=null;
+  let blob, name;
+  try{ blob=currentBlob(); name=`${S.spec.identifier}.mcaddon`; }
+  catch(e){ showError("Couldn't build the file: "+e.message); return; }
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");
+  a.href=url; a.download=name;
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),10000);
+  S.saved = `${name} saved. Open it and Minecraft will import both packs.`;
+  render();
+}
+
+function shareFile(){
+  showError(""); S.saved="";
+  try{
+    const blob=currentBlob(), name=`${S.spec.identifier}.mcaddon`;
+    const file=new File([blob], name, {type:"application/octet-stream"});
+    if(!navigator.canShare || !navigator.canShare({files:[file]})){
+      showError("This browser has no share sheet for files. Use Save add-on instead.");
+      return;
+    }
+    navigator.share({files:[file], title:name})
+      .then(()=>{ S.saved=`Sent ${name}. Save it, then tap it to import.`; render(); })
+      .catch(e=>{ if(e && e.name!=="AbortError") showError("The share sheet refused the file. Use Save add-on instead."); });
+  }catch(e){ showError("Couldn't build the file: "+e.message); }
+}
+
+function decide(opt, yes){
+  S.decided[opt.id]=yes;
+  const merged=Object.assign({}, S.spec.props||{});
+  (S.spec.options||[]).forEach(o=>{ if(S.decided[o.id]) Object.assign(merged, o.patch||{}); });
+  S.props=merged;
+  render();
+}
+
+/* ============================================================
+   10. PROP LABELS
+   ============================================================ */
+const META = {
+  hardness:["Mining time","seconds",0,30,.1],
+  resistance:["Blast resistance","",0,60,.5],
+  luminance:["Light given off","0–15",0,15,1],
+  friction:["Friction","0 = ice",0,1,.05],
+  stackSize:["Stack size","",1,64,1],
+  nutrition:["Hunger restored","half-drumsticks",1,20,1],
+  saturation:["Saturation","",0,2,.1],
+  useDuration:["Time to eat","seconds",.4,5,.1],
+  durability:["Durability","uses",1,3000,10],
+  damage:["Attack damage","",0,20,1],
+  enchantability:["Enchantability","",0,30,1],
+  health:["Health","half-hearts",1,100,1],
+  speed:["Walk speed","",.05,.6,.01],
+  scale:["Size","×",.2,3,.1],
+  attackDamage:["Attack damage","",0,20,1]
+};
+const BOOLS = { canAlwaysEat:"Edible even when full", hostile:"Attacks players" };
+
+/* ============================================================
+   11. RENDER
+   ============================================================ */
+function render(){
+  const app=$("#app");
+  app.textContent="";
+
+  // logo preview
+  const logo=$("#logo"); logo.textContent="";
+  if(S.frames.length) logo.append(grid(S.frames[S.preview % S.frames.length], S.palette, 3));
+
+  if(S.stage==="kind"){
+    app.append(panel("1","What would you like to make today?",
+      el("div",{class:"grid2"},
+        KINDS.map(([id,label,hint])=>
+          el("button",{class:"choice", onclick:()=>{ S.kindHint=id; S.stage="describe"; render(); }},
+            el("b",{},label), el("span",{class:"sm dim"},hint))
+        )
+      )
+    ));
+  }
+
+  if(S.stage==="describe"){
+    const ta=el("textarea",{rows:4, placeholder:"A glowing purple crystal block that's slippery like ice and lights up caves…"});
+    ta.value=S.desc;
+    ta.addEventListener("input",e=>{ S.desc=e.target.value; go.disabled = S.desc.trim().length<4; });
+    const go=btn("Check if Bedrock can do this", runCheck);
+    go.disabled = S.desc.trim().length<4;
+    app.append(panel("2","Tell me about your add-on",
+      ta,
+      el("div",{class:"row",style:"margin-top:16px"}, go, btn("Back",()=>{S.stage="kind";render();},"b-quiet"))
+    ));
+    setTimeout(()=>ta.focus(),0);
+  }
+
+  if(S.stage==="busy"){
+    app.append(panel(null,null,
+      el("div",{class:"row",style:"padding:12px 0"}, el("div",{class:"spin"}), el("span",{class:"dim"},S.busyMsg))
+    ));
+  }
+
+  if(S.stage==="studio" && S.spec){
+    const sp=S.spec;
+
+    /* verdict */
+    const v=el("div",{},
+      el("div",{class:"row",style:"align-items:flex-start;flex-wrap:nowrap;gap:12px"},
+        el("span",{class:"tag",style:`background:${sp.compatible?"var(--grass)":"var(--redstone)"};${sp.compatible?"":"color:#fff"}`},
+          sp.compatible?"Works on Bedrock":"Not buildable"),
+        el("div",{},
+          el("p",{style:"font-weight:700;margin:0"}, sp.name, el("span",{class:"dim"}," — "+sp.kind)),
+          el("p",{class:"sm dim",style:"margin:4px 0 0"}, sp.verdict||"")
+        )
+      )
+    );
+    if(sp.unsupported.length){
+      v.append(el("div",{style:"margin-top:16px;padding-top:16px;border-top:2px solid var(--line)"},
+        el("p",{class:"sm gold"},"Left out — this generator can't build these:"),
+        el("ul",{class:"sm dim",style:"margin:0;padding-left:18px"}, sp.unsupported.map(u=>el("li",{},u)))
+      ));
+    }
+    app.append(panel("3","Compatibility check", v));
+
+    /* paint */
+    const canvasHost=el("div",{});
+    function redrawCanvas(){
+      canvasHost.textContent="";
+      canvasHost.append(grid(S.frames[S.frameIdx], S.palette, 20, (x,y,cell)=>{
+        const ch = S.erasing ? "." : S.brush.toString(16);
+        const row = S.frames[S.frameIdx][y];
+        S.frames[S.frameIdx][y] = row.slice(0,x) + ch + row.slice(x+1);
+        cell.style.background = ch==="." ? "transparent" : (S.palette[S.brush]||"#ff00ff");
+      }));
+    }
+    redrawCanvas();
+
+    const swatches=el("div",{class:"row",style:"gap:8px;margin-bottom:16px"});
+    function redrawSwatches(){
+      swatches.textContent="";
+      S.palette.forEach((col,i)=>{
+        const sw=el("label",{class:"swatch"+(S.brush===i&&!S.erasing?" on":""),style:`background:${col}`,
+          onclick:()=>{ S.brush=i; S.erasing=false; redrawSwatches(); }});
+        const inp=el("input",{type:"color",value:col});
+        inp.addEventListener("input",e=>{ S.palette[i]=e.target.value; sw.style.background=e.target.value; redrawCanvas(); });
+        sw.append(inp);
+        swatches.append(sw);
+      });
+      swatches.append(el("button",{class:"b-quiet",style:"width:40px;height:40px;padding:0",
+        title:"Add a colour", onclick:()=>{ S.palette.push("#ffffff"); redrawSwatches(); }},"+"));
+    }
+    redrawSwatches();
+
+    const tools=el("div",{class:"row",style:"margin-bottom:16px"},
+      btn(S.erasing?"Eraser on":"Eraser",function(){ S.erasing=!S.erasing; this.textContent=S.erasing?"Eraser on":"Eraser"; this.className=(S.erasing?"b-gold":"b-quiet")+" b-sm"; redrawSwatches(); }, (S.erasing?"b-gold":"b-quiet")+" b-sm"),
+      btn("Clear frame",()=>{ S.frames[S.frameIdx]=blankFrame(); redrawCanvas(); },"b-quiet b-sm")
+    );
+
+    const right=el("div",{style:"flex:1 1 240px;min-width:240px"},
+      el("p",{class:"sm dim"},"Colours — tap a swatch to use it, tap again to change it"),
+      swatches, tools
+    );
+
+    if(sp.kind==="block"){
+      const anim=el("div",{style:"padding-top:16px;border-top:2px solid var(--line)"});
+      function redrawFrames(){
+        anim.textContent="";
+        anim.append(el("p",{class:"sm dim"},"Animation — extra frames loop, like a lava block"));
+        const strip=el("div",{class:"row",style:"gap:8px;margin-bottom:12px"});
+        S.frames.forEach((f,i)=>{
+          const holder=el("div",{class:"frame"});
+          const pick=el("button",{class:"pick"+(i===S.frameIdx?" on":""),
+            onclick:()=>{ S.frameIdx=i; redrawFrames(); redrawCanvas(); }});
+          pick.append(grid(f,S.palette,2));
+          holder.append(pick);
+          if(S.frames.length>1){
+            holder.append(el("button",{class:"x b-red",onclick:()=>{
+              S.frames.splice(i,1); S.frameIdx=0;
+              if(S.frames.length<2) S.animate=false;
+              redrawFrames(); redrawCanvas();
+            }},"×"));
+          }
+          strip.append(holder);
+        });
+        strip.append(btn("+ Frame",()=>{
+          S.frames.push(S.frames[S.frames.length-1].slice());
+          S.frameIdx=S.frames.length-1; S.animate=true;
+          redrawFrames(); redrawCanvas();
+        },"b-quiet b-sm"));
+        anim.append(strip);
+        if(S.frames.length>1){
+          const cb=el("input",{type:"checkbox"}); cb.checked=S.animate;
+          cb.addEventListener("change",e=>S.animate=e.target.checked);
+          const nb=el("input",{type:"number",min:1,max:60,style:"width:70px"});
+          nb.value=S.tpf;
+          nb.addEventListener("input",e=>S.tpf=Math.max(1,Math.min(60,+e.target.value||1)));
+          anim.append(el("label",{class:"row sm dim",style:"gap:8px"}, cb, "Animate at", nb, "ticks per frame"));
+        }
+      }
+      redrawFrames();
+      right.append(anim);
+    } else {
+      right.append(el("p",{class:"sm dim",style:"padding-top:16px;border-top:2px solid var(--line)"},
+        "Bedrock only animates block textures, so this one stays a single frame. Use the eraser for a transparent background."));
+    }
+
+    app.append(panel("4","Paint it",
+      el("div",{class:"row",style:"gap:24px;align-items:flex-start"}, canvasHost, right)
+    ));
+
+    /* tune */
+    const tune=el("div",{});
+    if(!S.showEditor){
+      tune.append(btn("Edit mod",()=>{S.showEditor=true;render();},"b-gold"));
+    } else {
+      if(sp.options.length){
+        const list=el("div",{style:"margin-bottom:24px"});
+        sp.options.forEach(o=>{
+          const st=S.decided[o.id];
+          list.append(el("div",{class:"opt"+(st===true?" yes":st===false?" no":"")},
+            el("div",{class:"t"},
+              el("div",{style:"font-weight:700;font-size:14px"}, o.label,
+                (o.recommended&&st===null)?el("span",{class:"gold sm",style:"font-weight:400"}," suggested"):null),
+              el("div",{class:"sm dim"}, o.detail||"")
+            ),
+            el("div",{class:"row",style:"gap:8px"},
+              btn("Accept",()=>decide(o,true), (st===true?"":"b-quiet")+" b-sm"),
+              btn("Decline",()=>decide(o,false), (st===false?"b-red":"b-quiet")+" b-sm")
+            )
+          ));
+        });
+        tune.append(list);
+      }
+      const sliders=el("div",{style:"padding-top:16px;border-top:2px solid var(--line)"});
+      Object.keys(S.props).forEach(k=>{
+        const val=S.props[k];
+        if(typeof val==="boolean"){
+          const cb=el("input",{type:"checkbox"}); cb.checked=val;
+          cb.addEventListener("change",e=>S.props[k]=e.target.checked);
+          sliders.append(el("label",{class:"row sm",style:"gap:12px;margin-bottom:16px"}, cb, BOOLS[k]||k));
+          return;
+        }
+        const m=META[k]; if(!m) return;
+        const [label,unit,min,max,step]=m;
+        const out=el("span",{class:"gold"}, String(val), el("span",{class:"dim"}, unit?" "+unit:""));
+        const sl=el("input",{type:"range",class:"slider",min,max,step});
+        sl.value=val;
+        sl.addEventListener("input",e=>{
+          S.props[k]=+e.target.value;
+          out.textContent=e.target.value;
+          if(unit) out.append(el("span",{class:"dim"}," "+unit));
+        });
+        sliders.append(el("div",{style:"margin-bottom:16px"},
+          el("div",{class:"between"}, el("span",{},label), out), sl));
+      });
+      tune.append(sliders);
+    }
+    app.append(panel("5","Tune the behaviour", tune));
+
+    /* save */
+    const save=el("div",{},
+      el("div",{class:"row"},
+        btn("Save add-on", saveFile),
+        btn("Send to another app", shareFile, "b-gold"),
+        btn("Start a new one", ()=>{ Object.assign(S,{stage:"kind",spec:null,desc:"",saved:"",showEditor:false,frames:[fallbackFrame()]}); showError(""); render(); }, "b-quiet")
+      )
+    );
+    if(S.saved) save.append(el("p",{class:"note ok",style:"margin-top:16px"}, S.saved));
+    save.append(el("p",{class:"sm dim",style:"margin-top:16px"},
+      "Windows: double-click the file. Android or iPad: tap it in Files, or use Send to another app. If it gets renamed to .zip, rename it back to .mcaddon. Then turn both packs on in your world settings."));
+    app.append(panel("6","Save your add-on", save));
+  }
+}
+
+/* ============================================================
+   12. BOOT
+   ============================================================ */
+S.frames=[fallbackFrame()];
+syncSettings();
+if(!loadCfg().key) $("#settings").open = true;
+render();
+
+// gentle logo animation
+setInterval(()=>{
+  if(S.frames.length>1 && S.animate){ S.preview=(S.preview+1)%S.frames.length; render(); }
+}, 900);
+</script>
+</body>
+</html>
