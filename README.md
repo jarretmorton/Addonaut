@@ -103,17 +103,39 @@ Everything configurable lives at the top of the script in
 [`index.html`](index.html):
 
 - `APP_VERSION` — shown in the header. Bump on release.
-- `DEFAULT_MODEL` — the model to call. Currently `gemini-3.8-flash`.
+- `DEFAULT_MODEL` / `DEFAULT_LITE_MODEL` — where the model picker starts before
+  Google's own list arrives, and where it stays if that list never does.
 - `RETIRED_MODELS` — model IDs this app once prefilled into the Model box. A
   saved value matching one is cleared at boot, so a browser that never chose a
   model follows the current default instead of being pinned to an old one.
 
-The **⚙ button** in the header opens AI settings: model and key. The Model box
-is editable, so a stale default can be fixed without touching the code — and a
-404 from Google says exactly that.
+The **⚙ button** in the header opens AI settings: model and key.
 
-**Model names go stale.** Verify current IDs at
-<https://ai.google.dev/gemini-api/docs/models>.
+### The model list comes from Google
+
+Model names go stale fast, so the picker is not a hard-coded list. On startup
+(and whenever settings open) the app calls Google's
+[ListModels](https://ai.google.dev/api/models) endpoint with your key and fills
+the dropdown with what that key can actually reach, newest first. A **Switch to
+the lighter model** button cycles between the two the app cares about:
+
+- **best free** — the newest full Flash model
+- **lighter** — the newest Flash-Lite, which has higher rate limits and slightly
+  less detail
+
+Picking the best model stores nothing, so that browser keeps following the best
+as it moves; picking anything else pins it by ID.
+
+**One caveat worth knowing.** ListModels reports what a key can reach, but *not
+what anything costs* — there is no free-tier or pricing field in the response.
+So "free" here is **inferred from the family**: Flash and Flash-Lite are the
+tiers Google offers at no cost, Pro is not, and everything else (embedding,
+image, TTS) is filtered out. If Google changes which families are free, the
+`keepModel()` filter is the line to revisit.
+
+Discovery is always an enhancement, never a dependency. No key, no network, or
+a refused list simply leaves the built-in defaults in place, and the app carries
+on.
 
 Two `localStorage` keys, both written only by the settings panel:
 
