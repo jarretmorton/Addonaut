@@ -52,6 +52,9 @@
   /* Header gear — the only way into AI settings, so it keeps a button's weight. */
   .b-icon{background:var(--panel2);color:var(--bone);border-color:var(--line);padding:0;width:44px;height:44px;font-size:20px;line-height:1;flex:0 0 auto}
   .b-icon.on{background:var(--gold);color:var(--ink);border-color:var(--ink)}
+  /* Get a key / Save key / Forget key — same size, in that order. Wrapping
+     keeps three usable targets on a narrow phone instead of crushing them. */
+  .key-actions > *{flex:1 1 30%;min-width:8.5rem;text-align:center}
 
   input[type=text],input[type=password],input[type=number],textarea,select{
     font:inherit;background:var(--bg);color:var(--bone);border:2px solid var(--line);padding:10px;width:100%
@@ -133,21 +136,33 @@
       <p class="sm dim">Addonaut uses Google Gemini, which has a free tier. Your key stays in this
       browser only — it is never sent anywhere except straight to Google.</p>
 
-      <label style="margin:16px 0">
+      <label style="margin:16px 0 8px">
         <span class="sm dim">Model</span>
-        <input type="text" id="model" spellcheck="false">
+        <select id="model"></select>
       </label>
+      <p id="modelNote" class="sm dim" style="margin:0 0 12px" aria-live="polite"></p>
+      <button id="modelToggle" class="b-quiet b-sm" type="button"></button>
 
-      <label>
+      <label style="margin-top:16px">
         <span class="sm dim">Gemini API key</span>
         <input type="password" id="key" spellcheck="false" autocomplete="off" placeholder="AIza…">
       </label>
 
-      <div class="row" style="margin-top:16px">
+      <div class="row key-actions" style="margin-top:16px">
+        <a class="btn b-quiet" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Get a free key</a>
         <button id="saveKey">Save key</button>
-        <button id="clearKey" class="b-quiet">Forget key</button>
-        <a class="btn b-quiet b-sm" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Get a free key</a>
+        <button id="clearKey" class="b-red">Forget key</button>
       </div>
+
+      <!-- Forgetting a key can't be undone from here, so it asks first. -->
+      <div id="keyConfirm" class="note warn hide" style="margin-top:16px">
+        <p style="margin:0 0 12px">Forget the saved key? You'll have to paste it in again to make anything.</p>
+        <div class="row">
+          <button id="keyConfirmYes" class="b-red">Yes, forget it</button>
+          <button id="keyConfirmNo" class="b-quiet">Cancel</button>
+        </div>
+      </div>
+
       <p id="keyMsg" class="sm gold" style="margin-top:12px"></p>
 
       <div style="margin-top:16px;padding-top:16px;border-top:2px solid var(--line)">
@@ -193,12 +208,13 @@ const S = {
 };
 
 /* Version — single source of truth, shown in the header. Bump on release. */
-const APP_VERSION = "0.2.0";
+const APP_VERSION = "0.3.0";
 
-/* gemini-3.8-flash is the newest Flash model on Google's free tier (released
-   2026-09-02). Model names go stale fast; the Model box in AI settings is
-   editable, and a 404 from Google says exactly that in the error. */
-const DEFAULT_MODEL = "gemini-3.8-flash";
+/* Where the model picker starts before Google's own list arrives — and where
+   it stays if that list never does (no key yet, offline, refused). Discovery
+   replaces both at runtime, so these only have to be plausible, not current. */
+const DEFAULT_MODEL = "gemini-3.8-flash";        /* newest free Flash, 2026-09-02 */
+const DEFAULT_LITE_MODEL = "gemini-3.5-flash-lite"; /* higher rate limits */
 
 /* Model ids this app once prefilled into that box: an older Gemini default, and
    claude-sonnet-5 from the Anthropic provider it used to offer. A saved value
@@ -212,6 +228,68 @@ function loadCfg(){
     key: localStorage.getItem("af_key") || ""
   };
 }
+
+/* ============================================================
+   1b. MODEL DISCOVERY
+   ============================================================
+   Google's ListModels endpoint reports which models a key can actually reach,
+   so the app doesn't have to ship a name that goes stale. What it does NOT
+   report is price — there is no free-tier or cost field in the response. So
+   "free" is INFERRED from the family: Flash and Flash-Lite are the tiers
+   Google offers at no cost, Pro is not. That inference is the soft spot; if
+   Google changes which families are free, keepModel() is the line to revisit.
+
+   Discovery is always an enhancement, never a dependency: every path falls
+   back to the constants above. */
+const MODELS_URL = "https://generativelanguage.googleapis.com/v1beta/models";
+
+const shortId = n => String(n||"").replace(/^models\//,"");
+/* The numeric part of an id: "gemini-3.8-flash" -> 3.8. Ordering only, so
+   anything unparseable sorts last rather than throwing. */
+const versionOf = id => { const m=/gemini-(\d+(?:\.\d+)?)/.exec(id); return m ? parseFloat(m[1]) : 0; };
+const isLite = id => /-lite/.test(id);
+const isPreview = id => /preview|experimental|-exp/.test(id);
+
+/* Text-capable Flash models only; drop embedding, image, TTS, live and Pro. */
+function keepModel(m){
+  const id = shortId(m.name);
+  return (m.supportedGenerationMethods||[]).includes("generateContent")
+    && /^gemini-/.test(id) && /flash/.test(id)
+    && !/embedding|aqa|image|tts|audio|live/.test(id);
+}
+
+/* Newest first; at equal versions a stable release beats a preview, and only
+   then does full Flash beat Lite. Stability outranks power on purpose: a
+   stable Flash-Lite is a better thing to offer than a preview that may move
+   or vanish under the user. */
+function byPreference(a,b){
+  return versionOf(b.id)-versionOf(a.id)
+    || isPreview(a.id)-isPreview(b.id)
+    || isLite(a.id)-isLite(b.id)
+    || a.id.localeCompare(b.id);
+}
+
+async function listModels(key){
+  const found=[]; let pageToken="";
+  do{
+    const url = `${MODELS_URL}?pageSize=1000${pageToken?`&pageToken=${encodeURIComponent(pageToken)}`:""}`;
+    const res = await fetch(url,{headers:{"x-goog-api-key":key}});
+    if(!res.ok) throw new Error(`ListModels returned ${res.status}`);
+    const d = await res.json();
+    found.push(...(d.models||[]));
+    pageToken = d.nextPageToken || "";
+  } while(pageToken);
+  return found.filter(keepModel)
+    .map(m=>({id:shortId(m.name), label:m.displayName||shortId(m.name)}))
+    .sort(byPreference);
+}
+
+/* What discovery found, and the two the toggle cycles between. */
+let discovered = [];
+let pair = { best: DEFAULT_MODEL, lite: DEFAULT_LITE_MODEL };
+
+/* No saved model means "whatever the best free one is right now". */
+function activeModel(){ return loadCfg().model || pair.best; }
 
 /* ============================================================
    2. ZIP WRITER  (store method — no compression needed)
@@ -424,7 +502,7 @@ const num=(v,d)=> (typeof v==="number" && isFinite(v)) ? v : d;
 async function ask(prompt){
   const cfg = loadCfg();
   if(!cfg.key) throw settingsProblem("Add an API key first — the ⚙ button at the top opens AI settings.");
-  const model = cfg.model || DEFAULT_MODEL;
+  const model = activeModel();
 
   const res = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
@@ -570,11 +648,54 @@ function grid(rows, palette, size, onPaint){
    ============================================================ */
 function syncSettings(){
   const cfg=loadCfg();
-  $("#model").value = cfg.model || DEFAULT_MODEL;
-  $("#model").placeholder = DEFAULT_MODEL;
   $("#key").value = cfg.key;
   $("#keyState").textContent = cfg.key ? "key saved" : "no key saved yet";
+  $("#clearKey").disabled = !cfg.key;
+  hideKeyConfirm();
+  renderModelRow();
 }
+
+/* Fill the picker from whatever discovery found, always including the model in
+   use so the box can never silently disagree with what the app will call. */
+function renderModelRow(){
+  const current = activeModel();
+  const options = discovered.slice();
+  if(!options.some(m=>m.id===current)) options.unshift({id:current, label:current});
+
+  const sel = $("#model");
+  sel.textContent="";
+  options.forEach(m=>{
+    const tag = m.id===pair.best ? " — best free"
+              : m.id===pair.lite ? " — lighter, higher limits" : "";
+    sel.append(el("option",{value:m.id}, m.label+tag));
+  });
+  sel.value = current;
+
+  const onLite = isLite(current);
+  $("#modelToggle").textContent = onLite ? "Use the best free model" : "Switch to the lighter model";
+  $("#modelNote").textContent = onLite
+    ? "Lighter model: higher rate limits, slightly less detail."
+    : "On the strongest free model.";
+}
+
+/* Ask Google what this key can reach. Best-effort: no key, no network or a
+   refused list just leaves the built-in defaults in place. */
+async function refreshModelList(){
+  const cfg = loadCfg();
+  if(!cfg.key) return;
+  try{
+    const found = await listModels(cfg.key);
+    if(!found.length) return;
+    discovered = found;
+    pair = { best: found.find(m=>!isLite(m.id))?.id || DEFAULT_MODEL,
+             lite: found.find(m=>isLite(m.id))?.id || DEFAULT_LITE_MODEL };
+    renderModelRow();
+  }catch{
+    /* keep the built-in defaults; the picker still works */
+  }
+}
+
+function hideKeyConfirm(){ $("#keyConfirm").classList.add("hide"); }
 
 /* Settings take over the page while they are open, so the making flow below
    never has a half-filled key form sitting on top of it. */
@@ -585,6 +706,7 @@ function openSettings(){
   $("#settingsBtn").classList.add("on");
   $("#settingsBtn").setAttribute("aria-expanded","true");
   window.scrollTo(0,0);
+  refreshModelList();   // fire-and-forget; the list fills in when it lands
 }
 function closeSettings(){
   $("#settings").classList.add("hide");
@@ -595,18 +717,38 @@ function closeSettings(){
 $("#settingsBtn").addEventListener("click", ()=>{ settingsOpen() ? closeSettings() : openSettings(); });
 $("#closeSettings").addEventListener("click", closeSettings);
 
+/* Picking the best model stores nothing, so this browser keeps following the
+   best as it moves; anything else is pinned by id. */
+function storeModel(id){
+  localStorage.setItem("af_model", id === pair.best ? "" : id);
+  renderModelRow();
+}
+$("#model").addEventListener("change", e=>storeModel(e.target.value));
+$("#modelToggle").addEventListener("click", ()=>{
+  storeModel(isLite(activeModel()) ? pair.best : pair.lite);
+});
+
 $("#saveKey").addEventListener("click", ()=>{
-  const model = $("#model").value.trim();
-  /* Save nothing when the box still holds the shipped default, so this browser
-     keeps following the default as it moves rather than pinning today's name. */
-  localStorage.setItem("af_model", model === DEFAULT_MODEL ? "" : model);
   localStorage.setItem("af_key", $("#key").value.trim());
   syncSettings();
+  refreshModelList();   // a new key may reach a different set of models
   $("#keyMsg").textContent = "Saved in this browser.";
   setTimeout(()=>$("#keyMsg").textContent="", 3000);
 });
+
+/* Forgetting the key is destructive and can't be undone here, so it asks. */
 $("#clearKey").addEventListener("click", ()=>{
+  $("#keyConfirm").classList.remove("hide");
+  $("#keyConfirmYes").focus();
+});
+$("#keyConfirmNo").addEventListener("click", ()=>{
+  hideKeyConfirm();
+  $("#clearKey").focus();
+});
+$("#keyConfirmYes").addEventListener("click", ()=>{
   localStorage.removeItem("af_key");
+  discovered = [];   // the list belonged to that key
+  pair = { best: DEFAULT_MODEL, lite: DEFAULT_LITE_MODEL };
   syncSettings();
   $("#keyMsg").textContent = "Key removed.";
   setTimeout(()=>$("#keyMsg").textContent="", 3000);
@@ -959,6 +1101,7 @@ if((localStorage.getItem("af_key")||"").startsWith("sk-ant-")) localStorage.remo
 
 syncSettings();
 if(!loadCfg().key) openSettings();   // first run: the key is the only thing to do
+else refreshModelList();             // otherwise find the current best in the background
 render();
 
 // gentle logo animation
