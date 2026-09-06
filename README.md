@@ -80,8 +80,8 @@ If the download gets renamed to `.zip`, rename it back to `.mcaddon`.
 
 ## Local development
 
-One file, no build step, no dependencies. Serve the folder with any static file
-server:
+One HTML file plus three icon assets. No build step, no dependencies. Serve
+the folder with any static file server:
 
 ```bash
 # Python
@@ -174,7 +174,9 @@ available in the EEA, UK, or Switzerland**.
 
 ## Deploy to GitHub Pages
 
-No build step — just publish the file.
+No build step — just publish the folder. The icons must ship alongside
+`index.html`; without them a GitHub Pages URL falls back to whatever icon the
+browser has cached for the origin.
 
 1. Push this folder to a GitHub repo.
 2. Repo **Settings → Pages**.
@@ -185,12 +187,40 @@ No build step — just publish the file.
 ## Project structure
 
 ```
-index.html    the whole app — markup, styles and script in one file
+index.html            the whole app — markup, styles and script in one file
+icon.svg              the app icon, and the resting mark in the header
+favicon-32.png        tab icon for browsers that ignore SVG favicons
+apple-touch-icon.png  180×180 iOS home-screen icon, full bleed
 ```
 
 Inside, the script is sectioned in the order it runs: state, ZIP writer,
 pixels→PNG, add-on builder, AI calls and prompts, texture helpers, DOM helpers,
 settings wiring, actions, prop labels, render, boot.
+
+### The app icon
+
+An astronaut helmet whose maroon faceplate reflects the block you just made,
+drawn on the same 16×16 grid the texture editor paints on.
+
+`icon.svg` is the master, and the two PNGs are **rasterised from it** —
+regenerate them that way rather than redrawing, or the vector and the raster
+quietly diverge. `apple-touch-icon.png` is drawn at 176px, a whole 11px per
+cell, then padded to 180 on the same ground: 180 ÷ 16 lands on 11.25, and
+uneven cells look wrong on pixel art. Keep both PNGs **full bleed with square
+corners** — iOS applies its own mask, so pre-rounded corners get double-rounded
+and transparent corners render black.
+
+Two colours are load-bearing. The reflected block is green while the rest of the
+mark is a red family, because red on that maroon is 1.91:1 and the block
+dissolves into the faceplate at tab size, where grass green restores it to
+3.63:1. The ink ring does the same job for the faceplate against the bone shell,
+a 1.67:1 pairing on its own. Both are worth re-checking before changing any
+colour in the mark.
+
+The header shows `icon.svg` until a run has a texture of its own and then swaps
+to the texture, so the header mark cannot drift from the favicon. That swap is
+the only thing the icon does in the app — `fallbackFrame()` is unrelated, and
+still exists to give you a pattern to paint over when the texture call fails.
 
 ## Non-goals
 

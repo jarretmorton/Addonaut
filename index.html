@@ -6,7 +6,29 @@
 <title>Addonaut — add-on maker for Minecraft Bedrock</title>
 <meta name="description" content="Describe a Minecraft Bedrock add-on, check it works, paint the texture, export a real .mcaddon.">
 <meta name="theme-color" content="#16191d">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%2316191d'/><rect x='3' y='3' width='10' height='10' fill='%236aa84f'/><rect x='5' y='5' width='3' height='3' fill='%23e0a63c'/></svg>">
+<!--
+  App icon: an astronaut helmet whose maroon faceplate reflects the block you
+  just made — the app's own subject, drawn on the same 16×16 grid the texture
+  editor paints on. icon.svg is the master; favicon-32.png covers browsers that
+  ignore SVG favicons, and apple-touch-icon.png is separate because iOS does not
+  use SVG favicons for Add to Home Screen. Both PNGs are rasterised from
+  icon.svg — regenerate them from it rather than redrawing, or the vector and
+  the raster silently diverge. The resting header mark is icon.svg itself, so it
+  cannot drift from the favicon either.
+
+  Two colours are load-bearing. The reflected block is green while the rest of
+  the mark is a red family: red on this maroon measures 1.91:1 and the block
+  dissolves into the faceplate at tab size, where grass green restores it to
+  3.63:1. The ink ring does the same job for the faceplate against the bone
+  shell, which is otherwise a 1.67:1 pairing.
+
+  Without these links, a page on github.io with no icon of its own falls back to
+  whatever icon the browser has cached for the origin — which is how RockID
+  ended up showing an unrelated app's icon in Edge's tab view.
+-->
+<link rel="icon" type="image/svg+xml" href="icon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <style>
   :root{
     --bg:#16191d; --panel:#22272e; --panel2:#2c333c; --line:#414c58;
@@ -29,6 +51,10 @@
 
   .head{display:flex;align-items:center;gap:16px;margin-bottom:24px;flex-wrap:wrap}
   .head .grow{flex:1 1 200px}
+  /* The resting logo is icon.svg boxed to the same 52px the texture preview
+     occupies — 48px of pixels plus its 2px ink border. box-sizing is border-box
+     globally, so the 52 here is the outer edge and the swap costs no reflow. */
+  .logo-default{display:block;border:2px solid var(--ink)}
   .ver{font-size:12px;font-weight:700;letter-spacing:.02em;color:var(--dim);border:2px solid var(--line);padding:2px 6px;vertical-align:middle}
   .ver:empty{display:none}
 
@@ -877,9 +903,12 @@ function render(){
   const app=$("#app");
   app.textContent="";
 
-  // logo preview
+  // Logo preview: this run's texture once there is one, the app icon before
+  // that. Animation still only runs when there are frames to cycle.
   const logo=$("#logo"); logo.textContent="";
-  if(S.frames.length) logo.append(grid(S.frames[S.preview % S.frames.length], S.palette, 3));
+  logo.append(S.frames.length
+    ? grid(S.frames[S.preview % S.frames.length], S.palette, 3)
+    : el("img",{class:"logo-default", src:"icon.svg", width:52, height:52, alt:""}));
 
   if(S.stage==="kind"){
     app.append(panel("1","What would you like to make today?",
@@ -1073,7 +1102,7 @@ function render(){
       el("div",{class:"row"},
         btn("Save add-on", saveFile),
         btn("Send to another app", shareFile, "b-gold"),
-        btn("Start a new one", ()=>{ Object.assign(S,{stage:"kind",spec:null,desc:"",saved:"",showEditor:false,frames:[fallbackFrame()]}); showError(""); render(); }, "b-quiet")
+        btn("Start a new one", ()=>{ Object.assign(S,{stage:"kind",spec:null,desc:"",saved:"",showEditor:false,frames:[]}); showError(""); render(); }, "b-quiet")
       )
     );
     if(S.saved) save.append(el("p",{class:"note ok",style:"margin-top:16px"}, S.saved));
@@ -1086,7 +1115,6 @@ function render(){
 /* ============================================================
    12. BOOT
    ============================================================ */
-S.frames=[fallbackFrame()];
 $("#version").textContent = "v"+APP_VERSION;
 
 /* Clear what an older install may be carrying. Addonaut used to offer Anthropic
