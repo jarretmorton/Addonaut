@@ -21,6 +21,9 @@ pick a kind (or let the AI choose) → describe it → compatibility check, with
 anything unbuildable listed plainly → paint the texture → tune the behaviour →
 save a real `.mcaddon`
 
+Everything you make is kept in **your add-ons** (the ▤ button) automatically, so
+you can come back and keep working on it later.
+
 Two AI calls per run: one plans the add-on (kind, name, identifier, properties,
 suggested options), one designs the texture. If the texture call fails, you get
 a placeholder pattern to paint over and the run continues.
@@ -67,6 +70,33 @@ resource pack that depend on each other, so a single import turns on both:
 
 Everything is namespaced `custom:<identifier>`, and the identifier is
 lower-cased and stripped to `[a-z0-9_]` so it's always a legal Bedrock ID.
+
+## Your add-ons
+
+The ▤ button in the header opens everything you've made. There is no "save"
+step: the moment a compatibility check succeeds you have an entry, and every
+edit after that — a painted pixel, a moved slider, an accepted option, an added
+animation frame — updates it. Writes are debounced, so painting a texture is one
+save at the end rather than one per pixel.
+
+Each card shows the texture, the name and kind, when you last touched it, and
+the description you originally typed. From there you can:
+
+- **Open it** — the full studio comes back exactly as you left it, ready to
+  repaint, re-tune and export again.
+- **Re-run the AI** — sends the saved description back to the model for a fresh
+  plan and texture. The result is saved as a *new* add-on, so the one you
+  already painted is never overwritten.
+- **Delete it** — asks first, since it can't be undone.
+
+Entries live in this browser's `IndexedDB`, on your device only. Nothing is
+uploaded. The app also asks the browser to treat that storage as persistent,
+which matters most in Safari, where script-writable storage can otherwise be
+evicted after about a week without a visit. It is a request, not a guarantee.
+
+If IndexedDB is unavailable — private mode, a blocked origin — the library shows
+its empty state and the rest of the app carries on working. Nothing about making
+an add-on depends on it.
 
 ## Installing what you made
 
@@ -167,6 +197,8 @@ available in the EEA, UK, or Switzerland**.
   properties you tune, and the `.mcaddon` are all built locally — the ZIP is
   assembled in the browser and never uploaded.
 - Google is the only host the app talks to.
+- Saved add-ons live in this browser's `IndexedDB`, on your device only. They
+  are never uploaded, and deleting one from the library removes it for good.
 - No accounts, no analytics, no server. The page is static files.
 - A key in `localStorage` is readable by any script running on this page. That
   is the trade a serverless BYOK app makes, so prefer a free key you can revoke
@@ -224,9 +256,10 @@ still exists to give you a pattern to paint over when the texture call fails.
 
 ## Non-goals
 
-No accounts, no server, no database, no build tooling, no frameworks, no
-offline/PWA. Addonaut generates the five things Bedrock makes easy and is honest
-about the rest; it is not a full add-on IDE.
+No accounts, no server, no remote database, no build tooling, no frameworks, no
+offline/PWA. (Saved add-ons live in a local, on-device library — see above.)
+Addonaut generates the five things Bedrock makes easy and is honest about the
+rest; it is not a full add-on IDE.
 
 ---
 
