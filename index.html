@@ -81,6 +81,19 @@
   /* Get a key / Save key / Forget key — same size, in that order. Wrapping
      keeps three usable targets on a narrow phone instead of crushing them. */
   .key-actions > *{flex:1 1 30%;min-width:8.5rem;text-align:center}
+  .head-actions{display:flex;gap:8px;flex:0 0 auto}
+
+  /* library */
+  .lib-grid{display:grid;gap:16px;grid-template-columns:1fr}
+  @media(min-width:520px){.lib-grid{grid-template-columns:1fr 1fr}}
+  .lib-card{border:2px solid var(--line);background:var(--panel2);padding:12px}
+  /* A whole card is the open button, so it has to shed every button default. */
+  .lib-open{display:flex;gap:12px;align-items:flex-start;width:100%;text-align:left;
+    background:none;border:none;box-shadow:none;padding:0;font-weight:400;color:var(--bone)}
+  .lib-open:active{transform:none;box-shadow:none}
+  .lib-meta{display:flex;flex-direction:column;gap:2px;min-width:0}
+  .lib-meta b{color:var(--gold);font-size:15px}
+  .lib-desc{overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 
   input[type=text],input[type=password],input[type=number],textarea,select{
     font:inherit;background:var(--bg);color:var(--bone);border:2px solid var(--line);padding:10px;width:100%
@@ -146,8 +159,11 @@
       <h1>Addonaut <span id="version" class="ver"></span></h1>
       <p class="dim sm" style="margin:4px 0 0">Describe it, check it, paint it, export a real .mcaddon for Minecraft Bedrock.</p>
     </div>
-    <button id="settingsBtn" class="b-icon" type="button"
-            aria-controls="settings" aria-expanded="false" aria-label="AI settings" title="AI settings">⚙</button>
+    <div class="head-actions">
+      <button id="libraryBtn" class="b-icon" type="button" aria-label="Your add-ons" title="Your add-ons">▤</button>
+      <button id="settingsBtn" class="b-icon" type="button"
+              aria-controls="settings" aria-expanded="false" aria-label="AI settings" title="AI settings">⚙</button>
+    </div>
   </div>
 
   <div id="err" class="note err hide" style="margin-bottom:24px"></div>
@@ -213,7 +229,11 @@
    1. STATE
    ============================================================ */
 const S = {
-  stage: "kind",              // kind | describe | busy | studio
+  stage: "kind",              // kind | describe | busy | studio | library
+  entryId: null,              // library row this studio session writes to
+  created: null,              // when that row was first made
+  library: [],                // rows, newest first, for the library screen
+  confirmDelete: null,        // id awaiting a "really delete?" answer
   kindHint: "auto",
   desc: "",
   busyMsg: "",
@@ -234,7 +254,7 @@ const S = {
 };
 
 /* Version — single source of truth, shown in the header. Bump on release. */
-const APP_VERSION = "0.3.0";
+const APP_VERSION = "0.4.0";
 
 /* Where the model picker starts before Google's own list arrives — and where
    it stays if that list never does (no key yet, offline, refused). Discovery
@@ -316,6 +336,102 @@ let pair = { best: DEFAULT_MODEL, lite: DEFAULT_LITE_MODEL };
 
 /* No saved model means "whatever the best free one is right now". */
 function activeModel(){ return loadCfg().model || pair.best; }
+
+/* ============================================================
+   1c. LIBRARY — every add-on you make, kept on this device
+   ============================================================
+   Saved by default: the moment a check succeeds there is a row, and every edit
+   after that updates it. Nothing is uploaded — this is IndexedDB in your own
+   browser, the same shape RockID uses for saved specimens. Storage can fail
+   (private mode, a full disk, a blocked origin) and none of it is worth losing
+   the add-on you are working on, so every call here is best-effort: the studio
+   keeps working with no library at all. */
+const DB_NAME="addonaut-library", DB_VERSION=1, STORE="addons";
+let dbPromise=null;
+
+function openDb(){
+  if(dbPromise) return dbPromise;
+  dbPromise = new Promise((resolve,reject)=>{
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = ()=>{
+      const db = req.result;
+      if(!db.objectStoreNames.contains(STORE)){
+        db.createObjectStore(STORE,{keyPath:"id"}).createIndex("updated","updated");
+      }
+    };
+    req.onsuccess = ()=>resolve(req.result);
+    req.onerror = ()=>reject(req.error);
+  });
+  return dbPromise;
+}
+const dbStore = mode => openDb().then(db=>db.transaction(STORE,mode).objectStore(STORE));
+const wrapReq = req => new Promise((res,rej)=>{ req.onsuccess=()=>res(req.result); req.onerror=()=>rej(req.error); });
+
+async function putEntry(e){ const s=await dbStore("readwrite"); await wrapReq(s.put(e)); return e.id; }
+async function getEntry(id){ const s=await dbStore("readonly"); return wrapReq(s.get(id)); }
+async function deleteEntry(id){ const s=await dbStore("readwrite"); return wrapReq(s.delete(id)); }
+async function listEntries(){
+  const s = await dbStore("readonly");
+  const all = await wrapReq(s.getAll());
+  return all.sort((a,b)=> a.updated < b.updated ? 1 : -1);   // newest first
+}
+
+/* Everything needed to rebuild the studio exactly as it was left. Frames and
+   palette are copied, not referenced, so later painting can't rewrite history. */
+function snapshot(){
+  return {
+    id: S.entryId,
+    created: S.created,
+    updated: new Date().toISOString(),
+    desc: S.desc, kindHint: S.kindHint, model_id: activeModel(),
+    spec: S.spec, props: S.props, decided: S.decided,
+    palette: S.palette.slice(), frames: S.frames.map(f=>f.slice()),
+    animate: S.animate, tpf: S.tpf
+  };
+}
+
+/* Called after every edit. Debounced, so painting a texture is one write at the
+   end rather than one per pixel. */
+let saveTimer = null;
+function touch(){
+  if(!S.entryId) return;
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(()=>{ putEntry(snapshot()).catch(()=>{}); }, 600);
+}
+
+/* Begin a new library row for the session that just entered the studio. */
+async function startEntry(){
+  S.entryId = uuid();
+  S.created = new Date().toISOString();
+  try{ await putEntry(snapshot()); }catch{}
+}
+
+/* Load a saved add-on back into the studio, ready to edit and export. */
+function restoreEntry(e){
+  clearTimeout(saveTimer);           // don't let a pending write land on the old row
+  Object.assign(S,{
+    stage:"studio", entryId:e.id, created:e.created,
+    desc:e.desc||"", kindHint:e.kindHint||"auto",
+    spec:e.spec, props:Object.assign({},e.props||{}), decided:Object.assign({},e.decided||{}),
+    palette:(e.palette||[]).slice(), frames:(e.frames||[]).map(f=>f.slice()),
+    animate:!!e.animate, tpf:e.tpf||10,
+    frameIdx:0, brush:0, erasing:false, showEditor:false, saved:"", confirmDelete:null,
+    fileLink:null, preview:0
+  });
+  if(!S.frames.length) S.frames=[fallbackFrame()];
+  /* A row written by an older build may be missing these; the studio indexes
+     into both without checking. */
+  if(S.spec){
+    S.spec.options = Array.isArray(S.spec.options) ? S.spec.options : [];
+    S.spec.unsupported = Array.isArray(S.spec.unsupported) ? S.spec.unsupported : [];
+  }
+}
+
+/* Ask the browser not to evict the library. A request, not a guarantee — Safari
+   weighs engagement — so the result is ignored either way. */
+function requestPersistence(){
+  try{ navigator.storage?.persist?.(); }catch{}
+}
 
 /* ============================================================
    2. ZIP WRITER  (store method — no compression needed)
@@ -649,7 +765,10 @@ function grid(rows, palette, size, onPaint){
   const g = el("div",{class:"canvas"+(onPaint?" paint":"")+(size<8?" flat":"")});
   let down=false;
   const stop=()=>down=false;
-  window.addEventListener("pointerup",stop);
+  /* Only the paintable grid tracks the pointer. The library screen draws a
+     thumbnail per card, so binding this unconditionally would add a window
+     listener for every card on every render. */
+  if(onPaint) window.addEventListener("pointerup",stop);
   rows.forEach((row,y)=>{
     const r=el("div",{class:"r"});
     for(let x=0;x<16;x++){
@@ -742,6 +861,7 @@ function closeSettings(){
 }
 $("#settingsBtn").addEventListener("click", ()=>{ settingsOpen() ? closeSettings() : openSettings(); });
 $("#closeSettings").addEventListener("click", closeSettings);
+$("#libraryBtn").addEventListener("click", ()=>{ if(settingsOpen()) closeSettings(); openLibrary(); });
 
 /* Picking the best model stores nothing, so this browser keeps following the
    best as it moves; anything else is pinned by id. */
@@ -792,6 +912,28 @@ const KINDS = [
   ["auto","Not sure yet","Let the AI decide from your idea"]
 ];
 
+const shortDate = iso => {
+  const d = new Date(iso||"");
+  return isNaN(d) ? "" : d.toLocaleDateString(undefined,{month:"short",day:"numeric"});
+};
+
+async function openLibrary(){
+  showError("");
+  try{ S.library = await listEntries(); }
+  catch{ S.library = []; }   /* no IndexedDB (private mode) — the empty state covers it */
+  S.stage="library"; S.confirmDelete=null;
+  render();
+}
+
+/* Re-run the AI on a saved add-on's description. The result becomes a NEW
+   add-on, so the one you already painted is never overwritten. */
+function rerunEntry(e){
+  S.desc = e.desc || "";
+  S.kindHint = e.kindHint || "auto";
+  S.entryId = null;   // runCheck() opens a fresh row
+  runCheck();
+}
+
 async function runCheck(){
   showError("");
   S.saved=""; S.fileLink=null;
@@ -819,6 +961,7 @@ async function runCheck(){
     }
     S.frameIdx=0; S.brush=0; S.erasing=false; S.animate=false; S.showEditor=false;
     S.stage="studio";
+    await startEntry();   // saved from the moment it exists, not on request
   }catch(e){
     showError(e.message||"Something went wrong.");
     S.stage="describe";
@@ -871,6 +1014,7 @@ function decide(opt, yes){
   const merged=Object.assign({}, S.spec.props||{});
   (S.spec.options||[]).forEach(o=>{ if(S.decided[o.id]) Object.assign(merged, o.patch||{}); });
   S.props=merged;
+  touch();
   render();
 }
 
@@ -909,6 +1053,51 @@ function render(){
   logo.append(S.frames.length
     ? grid(S.frames[S.preview % S.frames.length], S.palette, 3)
     : el("img",{class:"logo-default", src:"icon.svg", width:52, height:52, alt:""}));
+
+  if(S.stage==="library"){
+    const body=el("div",{});
+    if(!S.library.length){
+      body.append(el("p",{class:"dim"},"Nothing here yet. Every add-on you make is saved to this device automatically — make one and it'll show up here."));
+      body.append(el("div",{class:"row",style:"margin-top:16px"}, btn("Make an add-on",()=>{ S.stage="kind"; render(); })));
+    } else {
+      const list=el("div",{class:"lib-grid"});
+      S.library.forEach(e=>{
+        const card=el("div",{class:"lib-card"});
+        const open=el("button",{class:"lib-open",title:"Open this add-on",
+          onclick:()=>{ restoreEntry(e); render(); }});
+        /* A thumbnail of the first frame — the fastest way to recognise one. */
+        open.append(grid((e.frames&&e.frames[0])||blankFrame(), e.palette||[], 4));
+        open.append(el("div",{class:"lib-meta"},
+          el("b",{}, e.spec?.name || "Untitled"),
+          el("span",{class:"sm dim"}, (e.spec?.kind||"?")+" · "+shortDate(e.updated)),
+          el("span",{class:"sm dim lib-desc"}, e.desc||"")
+        ));
+        card.append(open);
+
+        if(S.confirmDelete===e.id){
+          card.append(el("div",{class:"note warn",style:"margin-top:12px"},
+            el("p",{style:"margin:0 0 12px"},"Delete this add-on? It can't be brought back."),
+            el("div",{class:"row"},
+              btn("Delete",async()=>{ await deleteEntry(e.id).catch(()=>{});
+                if(S.entryId===e.id) S.entryId=null;   // the open session no longer has a row
+                S.confirmDelete=null; openLibrary(); },"b-red b-sm"),
+              btn("Cancel",()=>{ S.confirmDelete=null; render(); },"b-quiet b-sm")
+            )
+          ));
+        } else {
+          card.append(el("div",{class:"row",style:"margin-top:12px"},
+            btn("Re-run the AI",()=>rerunEntry(e),"b-gold b-sm"),
+            btn("Delete",()=>{ S.confirmDelete=e.id; render(); },"b-quiet b-sm")
+          ));
+        }
+        list.append(card);
+      });
+      body.append(list);
+      body.append(el("div",{class:"row",style:"margin-top:24px"},
+        btn("＋ Make another",()=>{ S.stage="kind"; S.entryId=null; render(); },"b-quiet")));
+    }
+    app.append(panel(null,"Your add-ons", body));
+  }
 
   if(S.stage==="kind"){
     app.append(panel("1","What would you like to make today?",
@@ -971,6 +1160,7 @@ function render(){
         const row = S.frames[S.frameIdx][y];
         S.frames[S.frameIdx][y] = row.slice(0,x) + ch + row.slice(x+1);
         cell.style.background = ch==="." ? "transparent" : (S.palette[S.brush]||"#ff00ff");
+        touch();
       }));
     }
     redrawCanvas();
@@ -982,18 +1172,18 @@ function render(){
         const sw=el("label",{class:"swatch"+(S.brush===i&&!S.erasing?" on":""),style:`background:${col}`,
           onclick:()=>{ S.brush=i; S.erasing=false; redrawSwatches(); }});
         const inp=el("input",{type:"color",value:col});
-        inp.addEventListener("input",e=>{ S.palette[i]=e.target.value; sw.style.background=e.target.value; redrawCanvas(); });
+        inp.addEventListener("input",e=>{ S.palette[i]=e.target.value; sw.style.background=e.target.value; redrawCanvas(); touch(); });
         sw.append(inp);
         swatches.append(sw);
       });
       swatches.append(el("button",{class:"b-quiet",style:"width:40px;height:40px;padding:0",
-        title:"Add a colour", onclick:()=>{ S.palette.push("#ffffff"); redrawSwatches(); }},"+"));
+        title:"Add a colour", onclick:()=>{ S.palette.push("#ffffff"); redrawSwatches(); touch(); }},"+"));
     }
     redrawSwatches();
 
     const tools=el("div",{class:"row",style:"margin-bottom:16px"},
       btn(S.erasing?"Eraser on":"Eraser",function(){ S.erasing=!S.erasing; this.textContent=S.erasing?"Eraser on":"Eraser"; this.className=(S.erasing?"b-gold":"b-quiet")+" b-sm"; redrawSwatches(); }, (S.erasing?"b-gold":"b-quiet")+" b-sm"),
-      btn("Clear frame",()=>{ S.frames[S.frameIdx]=blankFrame(); redrawCanvas(); },"b-quiet b-sm")
+      btn("Clear frame",()=>{ S.frames[S.frameIdx]=blankFrame(); redrawCanvas(); touch(); },"b-quiet b-sm")
     );
 
     const right=el("div",{style:"flex:1 1 240px;min-width:240px"},
@@ -1017,7 +1207,7 @@ function render(){
             holder.append(el("button",{class:"x b-red",onclick:()=>{
               S.frames.splice(i,1); S.frameIdx=0;
               if(S.frames.length<2) S.animate=false;
-              redrawFrames(); redrawCanvas();
+              redrawFrames(); redrawCanvas(); touch();
             }},"×"));
           }
           strip.append(holder);
@@ -1025,15 +1215,15 @@ function render(){
         strip.append(btn("+ Frame",()=>{
           S.frames.push(S.frames[S.frames.length-1].slice());
           S.frameIdx=S.frames.length-1; S.animate=true;
-          redrawFrames(); redrawCanvas();
+          redrawFrames(); redrawCanvas(); touch();
         },"b-quiet b-sm"));
         anim.append(strip);
         if(S.frames.length>1){
           const cb=el("input",{type:"checkbox"}); cb.checked=S.animate;
-          cb.addEventListener("change",e=>S.animate=e.target.checked);
+          cb.addEventListener("change",e=>{ S.animate=e.target.checked; touch(); });
           const nb=el("input",{type:"number",min:1,max:60,style:"width:70px"});
           nb.value=S.tpf;
-          nb.addEventListener("input",e=>S.tpf=Math.max(1,Math.min(60,+e.target.value||1)));
+          nb.addEventListener("input",e=>{ S.tpf=Math.max(1,Math.min(60,+e.target.value||1)); touch(); });
           anim.append(el("label",{class:"row sm dim",style:"gap:8px"}, cb, "Animate at", nb, "ticks per frame"));
         }
       }
@@ -1076,7 +1266,7 @@ function render(){
         const val=S.props[k];
         if(typeof val==="boolean"){
           const cb=el("input",{type:"checkbox"}); cb.checked=val;
-          cb.addEventListener("change",e=>S.props[k]=e.target.checked);
+          cb.addEventListener("change",e=>{ S.props[k]=e.target.checked; touch(); });
           sliders.append(el("label",{class:"row sm",style:"gap:12px;margin-bottom:16px"}, cb, BOOLS[k]||k));
           return;
         }
@@ -1089,6 +1279,7 @@ function render(){
           S.props[k]=+e.target.value;
           out.textContent=e.target.value;
           if(unit) out.append(el("span",{class:"dim"}," "+unit));
+          touch();
         });
         sliders.append(el("div",{style:"margin-bottom:16px"},
           el("div",{class:"between"}, el("span",{},label), out), sl));
@@ -1102,7 +1293,10 @@ function render(){
       el("div",{class:"row"},
         btn("Save add-on", saveFile),
         btn("Send to another app", shareFile, "b-gold"),
-        btn("Start a new one", ()=>{ Object.assign(S,{stage:"kind",spec:null,desc:"",saved:"",showEditor:false,frames:[]}); showError(""); render(); }, "b-quiet")
+        btn("Re-run the AI", ()=>rerunEntry({desc:S.desc, kindHint:S.kindHint}), "b-gold"),
+        /* frames:[] on purpose — the header mark falls back to icon.svg once
+           there's no texture to preview (see the logo block in render). */
+        btn("Start a new one", ()=>{ Object.assign(S,{stage:"kind",spec:null,desc:"",saved:"",showEditor:false,frames:[],entryId:null,created:null}); showError(""); render(); }, "b-quiet")
       )
     );
     if(S.saved) save.append(el("p",{class:"note ok",style:"margin-top:16px"}, S.saved));
@@ -1116,6 +1310,7 @@ function render(){
    12. BOOT
    ============================================================ */
 $("#version").textContent = "v"+APP_VERSION;
+requestPersistence();   // fire-and-forget: ask the browser not to evict the library
 
 /* Clear what an older install may be carrying. Addonaut used to offer Anthropic
    as a second provider, so a browser can still hold a provider flag, a Claude
