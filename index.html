@@ -49,11 +49,19 @@
   .gold{color:var(--gold)}
   .sm{font-size:13.5px}
 
-  .head{display:flex;align-items:center;gap:16px;margin-bottom:24px;flex-wrap:wrap}
-  .head .grow{flex:1 1 200px}
-  /* The resting logo is icon.svg boxed to the same 52px the texture preview
-     occupies — 48px of pixels plus its 2px ink border. box-sizing is border-box
-     globally, so the 52 here is the outer edge and the swap costs no reflow. */
+  /* Header anatomy, shared with RockID: mark, wordmark and version on one row
+     that never wraps, the two actions pinned right, tagline on its own line
+     beneath. nowrap plus min-width:0 on the title is what keeps the buttons
+     beside the text on a phone rather than dropping them onto a line of their
+     own — the description used to push them there. */
+  .head{margin-bottom:24px}
+  .head-bar{display:flex;align-items:center;gap:12px;flex-wrap:nowrap}
+  .head-bar h1{font-size:22px;flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .head-tagline{margin:8px 0 0;color:var(--dim);font-size:13.5px}
+  #logo{flex:0 0 auto}
+  /* The resting logo is icon.svg boxed to the same 36px the texture preview
+     occupies — 32px of pixels plus its 2px ink border. box-sizing is border-box
+     globally, so the 36 here is the outer edge and the swap costs no reflow. */
   .logo-default{display:block;border:2px solid var(--ink)}
   .ver{font-size:12px;font-weight:700;letter-spacing:.02em;color:var(--dim);border:2px solid var(--line);padding:2px 6px;vertical-align:middle}
   .ver:empty{display:none}
@@ -81,7 +89,7 @@
   /* Get a key / Save key / Forget key — same size, in that order. Wrapping
      keeps three usable targets on a narrow phone instead of crushing them. */
   .key-actions > *{flex:1 1 30%;min-width:8.5rem;text-align:center}
-  .head-actions{display:flex;gap:8px;flex:0 0 auto}
+  .head-actions{display:flex;gap:8px;flex:0 0 auto;margin-left:auto}
 
   /* library */
   .lib-grid{display:grid;gap:16px;grid-template-columns:1fr}
@@ -153,18 +161,18 @@
 <body>
 <div class="wrap">
 
-  <div class="head">
-    <div id="logo"></div>
-    <div class="grow">
+  <header class="head">
+    <div class="head-bar">
+      <div id="logo"></div>
       <h1>Addonaut <span id="version" class="ver"></span></h1>
-      <p class="dim sm" style="margin:4px 0 0">Describe it, check it, paint it, export a real .mcaddon for Minecraft Bedrock.</p>
+      <div class="head-actions">
+        <button id="libraryBtn" class="b-icon" type="button" aria-label="Your add-ons" title="Your add-ons">▤</button>
+        <button id="settingsBtn" class="b-icon" type="button"
+                aria-controls="settings" aria-expanded="false" aria-label="AI settings" title="AI settings">⚙</button>
+      </div>
     </div>
-    <div class="head-actions">
-      <button id="libraryBtn" class="b-icon" type="button" aria-label="Your add-ons" title="Your add-ons">▤</button>
-      <button id="settingsBtn" class="b-icon" type="button"
-              aria-controls="settings" aria-expanded="false" aria-label="AI settings" title="AI settings">⚙</button>
-    </div>
-  </div>
+    <p class="head-tagline">Describe it, check it, paint it, export a real .mcaddon for Minecraft Bedrock.</p>
+  </header>
 
   <div id="err" class="note err hide" style="margin-bottom:24px"></div>
 
@@ -254,7 +262,7 @@ const S = {
 };
 
 /* Version — single source of truth, shown in the header. Bump on release. */
-const APP_VERSION = "0.4.0";
+const APP_VERSION = "0.4.1";
 
 /* Where the model picker starts before Google's own list arrives — and where
    it stays if that list never does (no key yet, offline, refused). Discovery
@@ -1051,8 +1059,8 @@ function render(){
   // that. Animation still only runs when there are frames to cycle.
   const logo=$("#logo"); logo.textContent="";
   logo.append(S.frames.length
-    ? grid(S.frames[S.preview % S.frames.length], S.palette, 3)
-    : el("img",{class:"logo-default", src:"icon.svg", width:52, height:52, alt:""}));
+    ? grid(S.frames[S.preview % S.frames.length], S.palette, 2)
+    : el("img",{class:"logo-default", src:"icon.svg", width:36, height:36, alt:""}));
 
   if(S.stage==="library"){
     const body=el("div",{});
