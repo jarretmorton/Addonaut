@@ -108,6 +108,19 @@ an add-on depends on it.
 
 If the download gets renamed to `.zip`, rename it back to `.mcaddon`.
 
+**Why the ZIP is typed `application/octet-stream`.** An `.mcaddon` is a ZIP, but
+labelling the blob `application/zip` made Chrome on Android enforce the matching
+extension and save it as `.zip` — which Minecraft won't import. `octet-stream`
+has no canonical extension for the browser to enforce, so the `.mcaddon` name
+survives the download.
+
+**On Android, sharing falls back to saving.** Chrome only shares file types on
+its own allowlist, and `.mcaddon` isn't one of them — it passes `canShare()` and
+then rejects the share with `NotAllowedError`. Rather than dead-end, **Send to
+another app** saves the file to your downloads and says so; open it from there
+and Minecraft imports it as usual. iOS and iPadOS take the file fine, which is
+where the share sheet is the easier route anyway.
+
 ## Local development
 
 One HTML file plus three icon assets. No build step, no dependencies. Serve
