@@ -262,7 +262,7 @@ const S = {
 };
 
 /* Version — single source of truth, shown in the header. Bump on release. */
-const APP_VERSION = "0.4.2";
+const APP_VERSION = "0.4.3";
 
 /* Where the model picker starts before Google's own list arrives — and where
    it stays if that list never does (no key yet, offline, refused). Discovery
@@ -469,7 +469,12 @@ function makeZip(files){
   const e=new Uint8Array(22), ev=new DataView(e.buffer);
   ev.setUint32(0,0x06054b50,true); ev.setUint16(8,files.length,true); ev.setUint16(10,files.length,true);
   ev.setUint32(12,cdSize,true); ev.setUint32(16,off,true);
-  return new Blob([...parts,...cds,e],{type:"application/zip"});
+  /* An .mcaddon IS a zip, but the blob is deliberately NOT typed application/zip:
+     Chrome enforces the extension that matches a known MIME type, so on Android
+     an application/zip blob lands in Downloads as .zip whatever the download
+     attribute asks for — and Minecraft won't import a .zip. octet-stream has no
+     canonical extension to enforce, so the .mcaddon name survives. */
+  return new Blob([...parts,...cds,e],{type:"application/octet-stream"});
 }
 
 /* ============================================================
