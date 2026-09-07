@@ -262,7 +262,7 @@ const S = {
 };
 
 /* Version — single source of truth, shown in the header. Bump on release. */
-const APP_VERSION = "0.4.3";
+const APP_VERSION = "0.5.0";
 
 /* Where the model picker starts before Google's own list arrives — and where
    it stays if that list never does (no key yet, offline, refused). Discovery
@@ -557,7 +557,12 @@ function buildAddon(o){
 
   if(o.kind==="item"||o.kind==="food"||o.kind==="tool"){
     const c={
-      "minecraft:icon":{texture:F},
+      /* The string form, not {texture:F} — Mojang's docs mark that field
+         "Deprecated, no longer in use", and an icon that resolves to nothing is
+         a blank square in the inventory, which is what food and tools were.
+         A plain string has worked since format_version 1.20.0 and still does,
+         so it also stays inside the min_engine_version this pack claims. */
+      "minecraft:icon":F,
       "minecraft:display_name":{value:o.name},
       "minecraft:max_stack_size": o.kind==="tool" ? 1 : num(P.stackSize,64)
     };
@@ -589,14 +594,20 @@ function buildAddon(o){
 
   if(o.kind==="mob"){
     const hostile=!!P.hostile, hp=num(P.health,10);
+    /* Size shows up in three places that have to agree: what the game draws
+       (minecraft:scale), what the player walks into (collision_box, which
+       Bedrock does NOT scale for you), and the box the renderer culls against
+       (visible_bounds, in the geometry below). The AI fills in props.scale, so
+       it can arrive outside the range the Size slider allows. */
+    const scale=Math.max(.2,Math.min(3,num(P.scale,1)));
     const c={
       "minecraft:type_family":{family:[F,"mob",hostile?"monster":"passive"]},
       "minecraft:health":{value:hp,max:hp},
       "minecraft:movement":{value:num(P.speed,.25)},
-      "minecraft:scale":{value:num(P.scale,1)},
+      "minecraft:scale":{value:scale},
       "minecraft:physics":{}, "minecraft:jump.static":{}, "minecraft:movement.basic":{},
       "minecraft:navigation.walk":{can_path_over_water:true,avoid_water:true},
-      "minecraft:collision_box":{width:.7,height:.8},
+      "minecraft:collision_box":{width:scale,height:scale},
       "minecraft:nameable":{},
       "minecraft:behavior.float":{priority:0},
       "minecraft:behavior.random_stroll":{priority:6,speed_multiplier:1},
@@ -626,12 +637,26 @@ function buildAddon(o){
         spawn_egg:{base_color:o.palette[0]||"#88aabb",overlay_color:o.palette[1]||"#334455"}
       }}
     })});
+    /* One full block, so a texel of the painted texture is a pixel of a block
+       face — the same relationship the block kind has to its own texture. This
+       was a 10-unit cube, shorter than a chicken.
+
+       Per-face UV, not the uv:[0,0] box-UV shorthand: box UV unwraps a 16-cube
+       across a 64×32 sheet and Addonaut only ever writes 16×16, so five of the
+       six faces sampled past the edge and wrapped — the diagonal seam players
+       were seeing. Naming every face at [0,0] size 16×16 puts the whole texture
+       on each side instead. Geometry 1.12.0 already supports this.
+
+       Visible bounds follow the scale, or a mob at ×3 is culled the moment it
+       leaves the middle of the screen. */
+    const face={uv:[0,0],uv_size:[16,16]}, bounds=Math.max(2,scale*2);
     files.push({name:`${F}_RP/models/entity/${F}.geo.json`,data:J({
       format_version:"1.12.0",
       "minecraft:geometry":[{
         description:{identifier:`geometry.${F}`,texture_width:16,texture_height:16,
-          visible_bounds_width:2,visible_bounds_height:2,visible_bounds_offset:[0,.5,0]},
-        bones:[{name:"body",pivot:[0,0,0],cubes:[{origin:[-5,0,-5],size:[10,10,10],uv:[0,0]}]}]
+          visible_bounds_width:bounds,visible_bounds_height:bounds,visible_bounds_offset:[0,scale/2,0]},
+        bones:[{name:"body",pivot:[0,0,0],cubes:[{origin:[-8,0,-8],size:[16,16,16],
+          uv:{north:face,south:face,east:face,west:face,up:face,down:face}}]}]
       }]
     })});
     files.push({name:`${F}_RP/render_controllers/${F}.rc.json`,data:J({
@@ -696,7 +721,7 @@ async function explain(res){
 }
 
 const SPEC_PROMPT = (desc, hint) => `You plan Minecraft Bedrock Edition add-ons for a generator that builds exactly five things:
-block (a full solid cube, one texture on all sides), item (plain inventory item), food (edible item), tool (weapon/tool with durability and damage), mob (simple cube-shaped creature, passive or hostile).
+block (a full solid cube, one texture on all sides), item (plain inventory item), food (edible item), tool (weapon/tool with durability and damage), mob (a one-block cube creature wearing its texture on all six sides, passive or hostile).
 
 It CANNOT do: custom 3D models beyond a cube, crafting recipes, GUIs, structures, dimensions, scripting, ore generation, armour, or anything Java-only.
 
@@ -720,7 +745,7 @@ block -> hardness, resistance, luminance (0-15), friction (0-1)
 item -> stackSize
 food -> nutrition (1-20), saturation (0-2), useDuration, canAlwaysEat (bool)
 tool -> durability, damage, enchantability
-mob -> health, speed (0.1-0.6), scale, hostile (bool), attackDamage
+mob -> health, speed (0.1-0.6), scale (0.2-3, where 1 is one block), hostile (bool), attackDamage
 
 Each option's patch may only set keys from that kind's list. Set compatible:false only if nothing buildable can be salvaged.`;
 
@@ -730,7 +755,7 @@ Reply with ONLY this JSON, no markdown fence:
 {"palette":["#rrggbb", 4 to 10 colours],"pixels":["................", exactly 16 strings of exactly 16 characters]}
 
 Each character is a lowercase hex digit 0-f indexing into palette, or "." for transparent.
-A block texture must be fully opaque with no "." and should tile seamlessly. An item, tool or mob texture uses "." for the background around the shape. Use at least 3 shades for depth, never a flat single-colour fill. Match Minecraft's chunky high-contrast pixel style.`;
+A block or mob texture must be fully opaque with no ".": a block should tile seamlessly, and a mob wears the texture on all six sides of a cube, so a "." there is a hole straight through it. An item, tool or food texture uses "." for the background around the shape. Use at least 3 shades for depth, never a flat single-colour fill. Match Minecraft's chunky high-contrast pixel style.`;
 
 /* ============================================================
    6. TEXTURE HELPERS
@@ -1267,7 +1292,9 @@ function render(){
       right.append(anim);
     } else {
       right.append(el("p",{class:"sm dim",style:"padding-top:16px;border-top:2px solid var(--line)"},
-        "Bedrock only animates block textures, so this one stays a single frame. Use the eraser for a transparent background."));
+        sp.kind==="mob"
+          ? "Bedrock only animates block textures, so this one stays a single frame. All six sides of the mob wear this texture, so an erased pixel is a hole straight through it."
+          : "Bedrock only animates block textures, so this one stays a single frame. Use the eraser for a transparent background."));
     }
 
     app.append(panel("4","Paint it",

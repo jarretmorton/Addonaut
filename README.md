@@ -36,7 +36,7 @@ a placeholder pattern to paint over and the run continues.
 | **Item** | A plain inventory item | stack size |
 | **Food** | An edible item | hunger restored, saturation, time to eat, edible when full |
 | **Tool** | A weapon/tool with durability | durability, attack damage, enchantability |
-| **Mob** | A cube-shaped creature, passive or hostile, with a spawn egg | health, walk speed, size, hostile, attack damage |
+| **Mob** | A one-block cube creature wearing your texture on all six sides, passive or hostile, with a spawn egg | health, walk speed, size, hostile, attack damage |
 
 Blocks can also be **animated**: add frames in the editor and Addonaut writes a
 flipbook texture with your chosen ticks-per-frame. Bedrock only animates block
