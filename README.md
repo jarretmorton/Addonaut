@@ -108,6 +108,13 @@ an add-on depends on it.
 
 If the download gets renamed to `.zip`, rename it back to `.mcaddon`.
 
+**On Android, sharing falls back to saving.** Chrome only shares file types on
+its own allowlist, and `.mcaddon` isn't one of them — it passes `canShare()` and
+then rejects the share with `NotAllowedError`. Rather than dead-end, **Send to
+another app** saves the file to your downloads and says so; open it from there
+and Minecraft imports it as usual. iOS and iPadOS take the file fine, which is
+where the share sheet is the easier route anyway.
+
 ## Local development
 
 One HTML file plus three icon assets. No build step, no dependencies. Serve
