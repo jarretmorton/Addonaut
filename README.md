@@ -26,7 +26,9 @@ you can come back and keep working on it later.
 
 Two AI calls per run: one plans the add-on (kind, name, identifier, properties,
 suggested options), one designs the texture. If the texture call fails, you get
-a placeholder pattern to paint over and the run continues.
+a placeholder pattern to paint over and the run continues — the paint step says
+so, gives the reason, and offers a **Draw it again** button that re-asks for
+just the texture, leaving the plan and your sliders alone.
 
 ## What it can build
 

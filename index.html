@@ -134,9 +134,13 @@
   .canvas.paint .c{cursor:crosshair}
   .canvas.flat .c{box-shadow:none}
 
-  .swatch{position:relative;width:40px;height:40px;border:2px solid var(--ink);box-shadow:4px 4px 0 0 var(--ink);cursor:pointer;padding:0;display:block}
+  .swatch-wrap{position:relative;display:block;width:40px;height:40px;flex:0 0 auto}
+  .swatch{width:100%;height:100%;border:2px solid var(--ink);box-shadow:4px 4px 0 0 var(--ink);cursor:pointer;padding:0;display:block}
   .swatch.on{border-color:var(--gold)}
-  .swatch input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;padding:0;border:0}
+  /* Under the button, never the tap target — the button decides when the picker
+     opens. opacity is .001 and not 0 because iOS Safari refuses to open a
+     picker for an input it treats as invisible. */
+  .swatch-wrap input{position:absolute;inset:0;width:100%;height:100%;opacity:.001;pointer-events:none;padding:0;border:0}
 
   .opt{display:flex;gap:12px;flex-wrap:wrap;align-items:center;padding:12px;border:2px solid var(--line);background:var(--panel2);margin-bottom:12px}
   .opt.yes{border-color:var(--grass)}
@@ -257,12 +261,15 @@ const S = {
   decided: {},
   showEditor: false,
   saved: "",
+  /* Why the texture is a placeholder, when it is one. Empty means the AI drew
+     what you are looking at. */
+  artError: "",
   fileLink: null,
   preview: 0
 };
 
 /* Version — single source of truth, shown in the header. Bump on release. */
-const APP_VERSION = "0.5.0";
+const APP_VERSION = "0.5.1";
 
 /* Where the model picker starts before Google's own list arrives — and where
    it stays if that list never does (no key yet, offline, refused). Discovery
@@ -424,7 +431,7 @@ function restoreEntry(e){
     palette:(e.palette||[]).slice(), frames:(e.frames||[]).map(f=>f.slice()),
     animate:!!e.animate, tpf:e.tpf||10,
     frameIdx:0, brush:0, erasing:false, showEditor:false, saved:"", confirmDelete:null,
-    fileLink:null, preview:0
+    artError:"", fileLink:null, preview:0
   });
   if(!S.frames.length) S.frames=[fallbackFrame()];
   /* A row written by an older build may be missing these; the studio indexes
@@ -688,14 +695,27 @@ async function ask(prompt){
     `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
     { method:"POST",
       headers:{"content-type":"application/json","x-goog-api-key":cfg.key},
+      /* maxOutputTokens is a COMBINED budget for thinking and output on
+         Gemini 3, and Flash thinks by default, so 2000 left the texture call —
+         16 rows of 16 characters plus a palette, the bigger of the two calls —
+         being truncated into unparseable JSON. No thinkingConfig on purpose:
+         the knob is thinkingBudget on 2.5 and thinkingLevel on 3.x, sending
+         both is an error, and Gemini 3 Flash cannot turn thinking off at all,
+         while the model picker will hand us any Flash model the key can reach.
+         A high ceiling is the one setting that is right for all of them, and
+         costs nothing when it goes unused. */
       body: JSON.stringify({
         contents:[{parts:[{text:prompt}]}],
-        generationConfig:{temperature:1, maxOutputTokens:2000, responseMimeType:"application/json"}
+        generationConfig:{temperature:1, maxOutputTokens:8192, responseMimeType:"application/json"}
       })
     });
   if(!res.ok) throw await explain(res);
   const d = await res.json();
   const text = (d.candidates?.[0]?.content?.parts||[]).map(p=>p.text||"").join("");
+  /* Named before the JSON check below, or a reply that ran out of room reads as
+     the model talking nonsense rather than as the length limit it is. */
+  if(d.candidates?.[0]?.finishReason === "MAX_TOKENS")
+    throw new Error("The model ran out of room before it finished answering. Try again.");
 
   const clean = text.replace(/```json/gi,"").replace(/```/g,"").trim();
   const a = clean.indexOf("{"), b = clean.lastIndexOf("}");
@@ -963,6 +983,39 @@ async function openLibrary(){
   render();
 }
 
+/* The texture call, on its own. A failure here is not fatal — there is always
+   a placeholder to paint over — but it used to be swallowed whole, so a drawing
+   the AI never made was indistinguishable from one it did. The reason is kept
+   in S.artError instead, which is what the paint step reports and what "Draw it
+   again" clears. */
+async function drawTexture(spec){
+  try{
+    const art = await ask(ART_PROMPT(spec.kind, spec.name, S.desc));
+    const pal = Array.isArray(art.palette)&&art.palette.length ? art.palette.slice(0,16) : S.palette;
+    let px = Array.isArray(art.pixels) ? art.pixels.slice(0,16).map(r=>String(r).slice(0,16).padEnd(16,".")) : [];
+    while(px.length<16) px.push(".".repeat(16));
+    S.palette = pal; S.frames=[px]; S.artError="";
+    return true;
+  }catch(e){
+    S.frames=[fallbackFrame()];
+    S.artError = e.message || "The drawing step failed.";
+    return false;
+  }
+}
+
+/* The "Draw it again" button. Only the texture is re-asked for: the plan, the
+   sliders and the library entry all stay as they are. */
+async function redrawTexture(){
+  showError("");
+  const was = S.stage;
+  S.stage="busy"; S.busyMsg="Drawing the texture…"; render();
+  await drawTexture(S.spec);
+  S.frameIdx=0; S.brush=0; S.erasing=false;
+  S.stage=was;
+  touch();          // the new texture belongs to the same saved add-on
+  render();
+}
+
 /* Re-run the AI on a saved add-on's description. The result becomes a NEW
    add-on, so the one you already painted is never overwritten. */
 function rerunEntry(e){
@@ -988,15 +1041,7 @@ async function runCheck(){
     spec.options.forEach(o=>S.decided[o.id]=null);
 
     S.busyMsg="Drawing the texture…"; render();
-    try{
-      const art = await ask(ART_PROMPT(spec.kind, spec.name, S.desc));
-      const pal = Array.isArray(art.palette)&&art.palette.length ? art.palette.slice(0,16) : S.palette;
-      let px = Array.isArray(art.pixels) ? art.pixels.slice(0,16).map(r=>String(r).slice(0,16).padEnd(16,".")) : [];
-      while(px.length<16) px.push(".".repeat(16));
-      S.palette = pal; S.frames=[px];
-    }catch{
-      S.frames=[fallbackFrame()];
-    }
+    await drawTexture(spec);
     S.frameIdx=0; S.brush=0; S.erasing=false; S.animate=false; S.showEditor=false;
     S.stage="studio";
     await startEntry();   // saved from the moment it exists, not on request
@@ -1226,24 +1271,56 @@ function render(){
     }
     redrawCanvas();
 
+    /* Two rules hold this together, both learned from iPad.
+
+       Selecting a colour must not rebuild the row. It used to, and Safari opens
+       a colour picker after the tap finishes dispatching — by which point the
+       input it was opening for had been thrown away and replaced, so nothing
+       happened. Chrome opens it during dispatch and never noticed. syncSwatches
+       only repaints the selection ring; the nodes stay put.
+
+       And the picker is opened deliberately, with focus() before click(), which
+       is what iOS needs. Nothing relies on a label forwarding a tap to a hidden
+       input any more: the input sits under the button with pointer-events off,
+       at opacity .001 rather than 0, because Safari will not open a picker for a
+       control it considers invisible.
+
+       So a tap on a swatch you are not using selects it, and a tap on the one
+       you are already using opens the picker — which is what the line above the
+       row has always promised, and what Android was not doing either. */
     const swatches=el("div",{class:"row",style:"gap:8px;margin-bottom:16px"});
-    function redrawSwatches(){
-      swatches.textContent="";
-      S.palette.forEach((col,i)=>{
-        const sw=el("label",{class:"swatch"+(S.brush===i&&!S.erasing?" on":""),style:`background:${col}`,
-          onclick:()=>{ S.brush=i; S.erasing=false; redrawSwatches(); }});
-        const inp=el("input",{type:"color",value:col});
-        inp.addEventListener("input",e=>{ S.palette[i]=e.target.value; sw.style.background=e.target.value; redrawCanvas(); touch(); });
-        sw.append(inp);
-        swatches.append(sw);
-      });
-      swatches.append(el("button",{class:"b-quiet",style:"width:40px;height:40px;padding:0",
-        title:"Add a colour", onclick:()=>{ S.palette.push("#ffffff"); redrawSwatches(); touch(); }},"+"));
+    const picks=[];
+    function syncSwatches(){
+      picks.forEach((sw,i)=> sw.classList.toggle("on", S.brush===i && !S.erasing));
     }
-    redrawSwatches();
+    function addSwatch(i){
+      const wrap=el("div",{class:"swatch-wrap"});
+      const sw=el("button",{type:"button",class:"swatch",style:`background:${S.palette[i]}`,
+        "aria-label":`Colour ${i+1}`});
+      const inp=el("input",{type:"color",value:S.palette[i],tabindex:-1,"aria-hidden":"true"});
+      sw.addEventListener("click",()=>{
+        if(S.brush!==i || S.erasing){ S.brush=i; S.erasing=false; syncSwatches(); return; }
+        inp.focus(); inp.click();
+      });
+      inp.addEventListener("input",e=>{
+        S.palette[i]=e.target.value; sw.style.background=e.target.value; redrawCanvas(); touch();
+      });
+      wrap.append(sw,inp);
+      picks[i]=sw;
+      swatches.insertBefore(wrap, addBtn);
+    }
+    const addBtn=el("button",{class:"b-quiet",style:"width:40px;height:40px;padding:0",
+      title:"Add a colour", onclick:()=>{
+        S.palette.push("#ffffff");
+        addSwatch(S.palette.length-1);
+        S.brush=S.palette.length-1; S.erasing=false; syncSwatches(); touch();
+      }},"+");
+    swatches.append(addBtn);
+    S.palette.forEach((_,i)=>addSwatch(i));
+    syncSwatches();
 
     const tools=el("div",{class:"row",style:"margin-bottom:16px"},
-      btn(S.erasing?"Eraser on":"Eraser",function(){ S.erasing=!S.erasing; this.textContent=S.erasing?"Eraser on":"Eraser"; this.className=(S.erasing?"b-gold":"b-quiet")+" b-sm"; redrawSwatches(); }, (S.erasing?"b-gold":"b-quiet")+" b-sm"),
+      btn(S.erasing?"Eraser on":"Eraser",function(){ S.erasing=!S.erasing; this.textContent=S.erasing?"Eraser on":"Eraser"; this.className=(S.erasing?"b-gold":"b-quiet")+" b-sm"; syncSwatches(); }, (S.erasing?"b-gold":"b-quiet")+" b-sm"),
       btn("Clear frame",()=>{ S.frames[S.frameIdx]=blankFrame(); redrawCanvas(); touch(); },"b-quiet b-sm")
     );
 
@@ -1297,7 +1374,17 @@ function render(){
           : "Bedrock only animates block textures, so this one stays a single frame. Use the eraser for a transparent background."));
     }
 
-    app.append(panel("4","Paint it",
+    /* A placeholder used to arrive with no explanation, so a texture the AI
+       never drew looked exactly like one it did. */
+    const paintBody=[];
+    if(S.artError){
+      paintBody.push(el("div",{class:"note err",style:"margin-bottom:16px"},
+        el("p",{style:"margin:0 0 8px"},"The AI couldn't draw this one, so here's a placeholder to paint over."),
+        el("p",{class:"sm dim",style:"margin:0 0 12px"}, S.artError),
+        btn("Draw it again", redrawTexture, "b-gold b-sm")
+      ));
+    }
+    app.append(panel("4","Paint it", paintBody,
       el("div",{class:"row",style:"gap:24px;align-items:flex-start"}, canvasHost, right)
     ));
 
@@ -1359,7 +1446,7 @@ function render(){
         btn("Re-run the AI", ()=>rerunEntry({desc:S.desc, kindHint:S.kindHint}), "b-gold"),
         /* frames:[] on purpose — the header mark falls back to icon.svg once
            there's no texture to preview (see the logo block in render). */
-        btn("Start a new one", ()=>{ Object.assign(S,{stage:"kind",spec:null,desc:"",saved:"",showEditor:false,frames:[],entryId:null,created:null}); showError(""); render(); }, "b-quiet")
+        btn("Start a new one", ()=>{ Object.assign(S,{stage:"kind",spec:null,desc:"",saved:"",showEditor:false,frames:[],entryId:null,created:null,artError:""}); showError(""); render(); }, "b-quiet")
       )
     );
     if(S.saved) save.append(el("p",{class:"note ok",style:"margin-top:16px"}, S.saved));
