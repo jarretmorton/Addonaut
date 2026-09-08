@@ -1,5 +1,7 @@
 # Addonaut
 
+<img width="140" alt="Addonaut icon" src="icon.svg" style="width: 15%;"/>
+
 A single-page web app that turns a plain-English idea into a real, installable
 Minecraft Bedrock add-on. Describe what you want, Addonaut checks it against
 what Bedrock can actually do, draws you a 16×16 texture you can repaint by hand,
