@@ -269,7 +269,7 @@ const S = {
 };
 
 /* Version — single source of truth, shown in the header. Bump on release. */
-const APP_VERSION = "0.5.1";
+const APP_VERSION = "0.6.0";
 
 /* Where the model picker starts before Google's own list arrives — and where
    it stays if that list never does (no key yet, offline, refused). Discovery
@@ -599,6 +599,157 @@ function buildAddon(o){
     lang.push(`item.${id}.name=${o.name}`);
   }
 
+  /* A ranged weapon is three things, not one, and Bedrock chains them in a
+     fixed order: the weapon's minecraft:shooter names an ammo ITEM, and it is
+     that ammo's own minecraft:projectile component which says what entity
+     leaves the barrel. Skip the middle link and the gun fires nothing at all.
+
+     Data-only add-ons have no recipes, so the ammo goes in the creative menu
+     under Equipment and survival needs a /give. Step 6 says so out loud rather
+     than leaving a player wondering why a finished gun won't shoot. */
+  if(o.kind==="ranged"){
+    const ammoId=`${id}_ammo`, ammoF=`${F}_ammo`;
+    const shotId=`${id}_shot`, shotF=`${F}_shot`;
+    const dmg=num(P.damage,6), boom=!!P.explodes;
+    const acc=Math.max(0,Math.min(1,num(P.accuracy,.9)));
+
+    files.push({name:`${F}_BP/items/${F}.json`,data:J({
+      format_version:"1.20.60",
+      "minecraft:item":{
+        description:{identifier:id,menu_category:{category:"equipment"}},
+        components:{
+          "minecraft:icon":F,
+          "minecraft:display_name":{value:o.name},
+          "minecraft:max_stack_size":1,
+          "minecraft:hand_equipped":true,
+          "minecraft:durability":{max_durability:num(P.durability,250)},
+          /* A draw duration of zero with charge_on_draw off is the whole
+             difference between a gun and a bow: the round leaves at full power
+             the moment you use it, instead of building up while you hold. Fire
+             rate is the use duration, so a slow weapon really is slower to
+             fire again. */
+          "minecraft:shooter":{
+            ammunition:[{item:ammoId,use_offhand:true,search_inventory:true,use_in_creative:true}],
+            max_draw_duration:0,
+            scale_power_by_draw_duration:false,
+            charge_on_draw:false
+          },
+          "minecraft:use_modifiers":{use_duration:Math.max(.05,num(P.fireRate,.25)),movement_modifier:.6},
+          "minecraft:use_animation":"bow"
+        }
+      }
+    })});
+
+    files.push({name:`${F}_BP/items/${ammoF}.json`,data:J({
+      format_version:"1.20.60",
+      "minecraft:item":{
+        description:{identifier:ammoId,menu_category:{category:"equipment"}},
+        components:{
+          "minecraft:icon":ammoF,
+          "minecraft:display_name":{value:`${o.name} Ammo`},
+          "minecraft:max_stack_size":64,
+          "minecraft:projectile":{projectile_entity:shotId,minimum_critical_power:1.25}
+        }
+      }
+    })});
+
+    /* An exploding round is removed by its own blast, so it must NOT also ask
+       to be removed on hit — the two race and the explosion loses. A plain
+       round has nothing to clean it up, so it keeps remove_on_hit. */
+    const onHit={
+      impact_damage:{damage:dmg,knockback:true,semi_random_diff_damage:false,destroy_on_hit:true},
+      particle_on_hit:{particle_type:"crit",num_particles:4,on_entity_hit:true,on_other_hit:true}
+    };
+    if(boom) onHit.definition_event={affect_projectile:true,event_trigger:{event:"addonaut:detonate",target:"self"}};
+    else onHit.remove_on_hit={};
+
+    const shot={
+      format_version:"1.20.60",
+      "minecraft:entity":{
+        description:{identifier:shotId,is_spawnable:false,is_summonable:true},
+        components:{
+          "minecraft:projectile":{
+            on_hit:onHit,
+            power:Math.max(.5,num(P.power,3)),
+            gravity:Math.max(0,num(P.drop,.02)),
+            /* Uncertainty is spread, so it runs the other way from the slider:
+               accuracy 1 means no scatter at all. */
+            uncertainty_base:Math.round((1-acc)*12*100)/100,
+            uncertainty_multiplier:0,
+            anchor:1,
+            offset:[0,-0.1,0],
+            hit_sound:"bow.hit",
+            shoot_target:true,
+            should_bounce:false
+          },
+          "minecraft:physics":{},
+          "minecraft:conditional_bandwidth_optimization":{}
+        }
+      }
+    };
+    if(boom){
+      /* Blast size follows the damage slider — a 4-damage round pops, a
+         20-damage one takes the wall with it — so the kind keeps one damage
+         knob instead of two that have to agree with each other. Block damage
+         respects the mobGriefing rule, like a creeper. */
+      shot["minecraft:entity"].component_groups={
+        "addonaut:detonate":{
+          "minecraft:explode":{
+            fuse_length:0, fuse_lit:true,
+            power:Math.max(1,Math.min(4,dmg/4)),
+            causes_fire:false,
+            destroy_affected_by_griefing:true
+          }
+        }
+      };
+      shot["minecraft:entity"].events={"addonaut:detonate":{add:{component_groups:["addonaut:detonate"]}}};
+    }
+    files.push({name:`${F}_BP/entities/${shotF}.json`,data:J(shot)});
+
+    files.push({name:`${F}_RP/entity/${shotF}.entity.json`,data:J({
+      format_version:"1.10.0",
+      "minecraft:client_entity":{description:{
+        identifier:shotId,
+        materials:{default:"entity_alphatest"},
+        textures:{default:`textures/entity/${shotF}`},
+        geometry:{default:`geometry.${shotF}`},
+        render_controllers:[`controller.render.${shotF}`]
+      }}
+    })});
+    /* A 3-unit cube, per-face UV like the mob's, so the round reads as a
+       tracer from any angle instead of a sprite that vanishes edge-on. */
+    const pface={uv:[0,0],uv_size:[16,16]};
+    files.push({name:`${F}_RP/models/entity/${shotF}.geo.json`,data:J({
+      format_version:"1.12.0",
+      "minecraft:geometry":[{
+        description:{identifier:`geometry.${shotF}`,texture_width:16,texture_height:16,
+          visible_bounds_width:1,visible_bounds_height:1,visible_bounds_offset:[0,0,0]},
+        bones:[{name:"body",pivot:[0,0,0],cubes:[{origin:[-1.5,-1.5,-1.5],size:[3,3,3],
+          uv:{north:pface,south:pface,east:pface,west:pface,up:pface,down:pface}}]}]
+      }]
+    })});
+    files.push({name:`${F}_RP/render_controllers/${shotF}.rc.json`,data:J({
+      format_version:"1.10.0",
+      render_controllers:{[`controller.render.${shotF}`]:{
+        geometry:"Geometry.default",materials:[{"*":"Material.default"}],textures:["Texture.default"]
+      }}
+    })});
+
+    files.push({name:`${F}_RP/textures/items/${F}.png`,data:png});
+    files.push({name:`${F}_RP/textures/items/${ammoF}.png`,data:framesToPng([ammoFrame(o.palette)],o.palette)});
+    files.push({name:`${F}_RP/textures/entity/${shotF}.png`,data:framesToPng([tracerFrame(o.palette)],o.palette)});
+    files.push({name:`${F}_RP/textures/item_texture.json`,data:J({
+      resource_pack_name:F,texture_name:"atlas.items",
+      texture_data:{
+        [F]:{textures:`textures/items/${F}`},
+        [ammoF]:{textures:`textures/items/${ammoF}`}
+      }
+    })});
+    lang.push(`item.${id}.name=${o.name}`);
+    lang.push(`item.${ammoId}.name=${o.name} Ammo`);
+    lang.push(`entity.${shotId}.name=${o.name} Shot`);
+  }
+
   if(o.kind==="mob"){
     const hostile=!!P.hostile, hp=num(P.health,10);
     /* Size shows up in three places that have to agree: what the game draws
@@ -740,10 +891,10 @@ async function explain(res){
   return new Error(`Gemini returned ${res.status}. ${detail}`.trim());
 }
 
-const SPEC_PROMPT = (desc, hint) => `You plan Minecraft Bedrock Edition add-ons for a generator that builds exactly five things:
-block (a full solid cube, one texture on all sides), item (plain inventory item), food (edible item), tool (weapon/tool with durability and damage), mob (a one-block cube creature wearing its texture on all six sides, passive or hostile).
+const SPEC_PROMPT = (desc, hint) => `You plan Minecraft Bedrock Edition add-ons for a generator that builds exactly six things:
+block (a full solid cube, one texture on all sides), item (plain inventory item), food (edible item), tool (melee weapon/tool with durability and damage), ranged (a weapon that fires a projectile — a gun, bow or blaster; the pack also gets a matching ammo item and the flying round itself), mob (a one-block cube creature wearing its texture on all six sides, passive or hostile).
 
-It CANNOT do: custom 3D models beyond a cube, crafting recipes, GUIs, structures, dimensions, scripting, ore generation, armour, or anything Java-only.
+It CANNOT do: custom 3D models beyond a cube, crafting recipes, GUIs, structures, dimensions, scripting, ore generation, armour, custom sounds, magazines or reloading, or anything Java-only.
 
 Player's request: "${desc}"
 ${hint && hint!=="auto" ? `They chose the kind: ${hint}` : "Pick the best kind yourself."}
@@ -765,9 +916,12 @@ block -> hardness, resistance, luminance (0-15), friction (0-1)
 item -> stackSize
 food -> nutrition (1-20), saturation (0-2), useDuration, canAlwaysEat (bool)
 tool -> durability, damage, enchantability
+ranged -> damage (what one hit takes off), fireRate (0.05-3, seconds between shots), power (0.5-8, how fast the round flies), accuracy (0-1, 1 is no scatter at all), drop (0-0.2, how far the round falls over distance), durability (shots before it breaks), explodes (bool)
 mob -> health, speed (0.1-0.6), scale (0.2-3, where 1 is one block), hostile (bool), attackDamage
 
-Each option's patch may only set keys from that kind's list. Set compatible:false only if nothing buildable can be salvaged.`;
+Each option's patch may only set keys from that kind's list. Set compatible:false only if nothing buildable can be salvaged.
+
+For "ranged", the verdict must mention that the ammo is a separate item, since there are no recipes to craft it with. A fast, flat, accurate weapon is a gun; a slow one with drop and a slow fire rate is a bow.`;
 
 const ART_PROMPT = (kind,name,desc) => `Design a 16x16 Minecraft Bedrock texture for a ${kind} called "${name}". The player described it as: "${desc}"
 
@@ -775,12 +929,69 @@ Reply with ONLY this JSON, no markdown fence:
 {"palette":["#rrggbb", 4 to 10 colours],"pixels":["................", exactly 16 strings of exactly 16 characters]}
 
 Each character is a lowercase hex digit 0-f indexing into palette, or "." for transparent.
-A block or mob texture must be fully opaque with no ".": a block should tile seamlessly, and a mob wears the texture on all six sides of a cube, so a "." there is a hole straight through it. An item, tool or food texture uses "." for the background around the shape. Use at least 3 shades for depth, never a flat single-colour fill. Match Minecraft's chunky high-contrast pixel style.`;
+A block or mob texture must be fully opaque with no ".": a block should tile seamlessly, and a mob wears the texture on all six sides of a cube, so a "." there is a hole straight through it. An item, tool, food or ranged texture uses "." for the background around the shape; draw a ranged weapon side-on with its barrel pointing right. Use at least 3 shades for depth, never a flat single-colour fill. Match Minecraft's chunky high-contrast pixel style.`;
 
 /* ============================================================
    6. TEXTURE HELPERS
    ============================================================ */
 const blankFrame = ()=> Array.from({length:16},()=>".".repeat(16));
+
+/* The ammo and the round in flight are generated, not painted: the studio has
+   one canvas and it belongs to the weapon. They are drawn from the weapon's own
+   palette instead, sorted by brightness, so a brass rifle fires brass rounds
+   and a plasma gun fires whatever colour the plasma is. Indices past 15 can't
+   be written as one hex digit, which is what a frame row holds, so the palette
+   is read up to 16 entries — the same ceiling the brush already has. */
+function paletteShades(palette){
+  const lum = h => {
+    const m=/^#?([0-9a-f]{6})$/i.exec(String(h||""));
+    if(!m) return 0;
+    const n=parseInt(m[1],16);
+    return .2126*(n>>16&255) + .7152*(n>>8&255) + .0722*(n&255);
+  };
+  const order=(palette||[]).slice(0,16).map((_,i)=>i).sort((a,b)=>lum(palette[a])-lum(palette[b]));
+  if(!order.length) return {d:"0",m:"0",l:"0"};
+  const at = i => order[Math.max(0,Math.min(order.length-1,i))].toString(16);
+  return { d:at(0), m:at(Math.floor(order.length/2)), l:at(order.length-1) };
+}
+
+/* A cartridge standing on its base. D/M/L are placeholders for the three
+   shades chosen above, "." is transparent — an item icon, so it wants a
+   background it doesn't paint. */
+const AMMO_ART = [
+  "................",
+  ".......LL.......",
+  "......DLLD......",
+  ".....DLLLLD.....",
+  ".....DMLLMD.....",
+  ".....DMLLMD.....",
+  ".....DDDDDD.....",
+  ".....DMLLMD.....",
+  ".....DMLLMD.....",
+  ".....DMLLMD.....",
+  ".....DMLLMD.....",
+  ".....DMLLMD.....",
+  ".....DMMMMD.....",
+  ".....DDDDDD.....",
+  "......DMMD......",
+  "................"
+];
+const ammoFrame = palette => {
+  const s=paletteShades(palette);
+  return AMMO_ART.map(r=>r.replace(/[DML]/g,c=>c==="D"?s.d:c==="M"?s.m:s.l));
+};
+
+/* Fully opaque on purpose: this one wraps the little cube the round flies as,
+   and a transparent texel there is a hole straight through the bullet. */
+const tracerFrame = palette => {
+  const s=paletteShades(palette);
+  return Array.from({length:16},(_,y)=>
+    Array.from({length:16},(_,x)=>
+      (x<2||y<2||x>13||y>13) ? s.d
+      : (x>5&&x<10&&y>5&&y<10) ? s.l
+      : s.m
+    ).join(""));
+};
 const fallbackFrame = ()=> Array.from({length:16},(_,y)=>
   Array.from({length:16},(_,x)=>
     (x===0||y===0||x===15||y===15) ? "4" : String((x*7+y*13+(x*y)%5)%4)
@@ -965,7 +1176,8 @@ const KINDS = [
   ["block","A block","Something you place and mine"],
   ["item","An item","Sits in your inventory"],
   ["food","Food","Something you can eat"],
-  ["tool","A tool or weapon","Has durability and damage"],
+  ["tool","A tool or melee weapon","Swung by hand — durability and damage"],
+  ["ranged","A ranged weapon","Fires a projectile — a gun or a bow"],
   ["mob","A creature","Cube-shaped, walks around"],
   ["auto","Not sure yet","Let the AI decide from your idea"]
 ];
@@ -1035,8 +1247,9 @@ async function runCheck(){
     spec.identifier = String(spec.identifier).toLowerCase().replace(/[^a-z0-9_]/g,"_").slice(0,30) || "my_creation";
     spec.options = Array.isArray(spec.options) ? spec.options : [];
     spec.unsupported = Array.isArray(spec.unsupported) ? spec.unsupported : [];
+    spec.props = Object.assign({}, DEFAULT_PROPS[spec.kind]||{}, spec.props||{});
     S.spec = spec;
-    S.props = Object.assign({}, spec.props||{});
+    S.props = Object.assign({}, spec.props);
     S.decided = {};
     spec.options.forEach(o=>S.decided[o.id]=null);
 
@@ -1139,12 +1352,36 @@ const META = {
   durability:["Durability","uses",1,3000,10],
   damage:["Attack damage","",0,20,1],
   enchantability:["Enchantability","",0,30,1],
+  fireRate:["Time between shots","seconds",.05,3,.05],
+  power:["How fast it flies","",.5,8,.1],
+  accuracy:["Accuracy","1 = no scatter",0,1,.05],
+  drop:["Bullet drop","",0,.2,.005],
   health:["Health","half-hearts",1,100,1],
   speed:["Walk speed","",.05,.6,.01],
   scale:["Size","×",.2,3,.1],
   attackDamage:["Attack damage","",0,20,1]
 };
-const BOOLS = { canAlwaysEat:"Edible even when full", hostile:"Attacks players" };
+const BOOLS = {
+  canAlwaysEat:"Edible even when full",
+  hostile:"Attacks players",
+  explodes:"Explodes where it lands"
+};
+
+/* What each kind's numbers are when the plan leaves one out. Step 5 draws one
+   slider per key it finds in props, so a key the model forgot is a knob the
+   player never gets — and on a weapon that could be the one deciding whether it
+   explodes. These are the same values the builder falls back to, kept here so
+   the panel and the .mcaddon can't drift apart, and they are merged into the
+   plan itself rather than just the working copy, because accepting an option
+   rebuilds the working copy from the plan. */
+const DEFAULT_PROPS = {
+  block:{hardness:1.5,resistance:3,luminance:0,friction:.6},
+  item:{stackSize:64},
+  food:{nutrition:4,saturation:.6,useDuration:1.6,canAlwaysEat:false},
+  tool:{durability:250,damage:6,enchantability:10},
+  ranged:{damage:6,fireRate:.25,power:3,accuracy:.9,drop:.02,durability:250,explodes:false},
+  mob:{health:10,speed:.25,scale:1,hostile:false,attackDamage:3}
+};
 
 /* ============================================================
    11. RENDER
@@ -1368,10 +1605,12 @@ function render(){
       redrawFrames();
       right.append(anim);
     } else {
-      right.append(el("p",{class:"sm dim",style:"padding-top:16px;border-top:2px solid var(--line)"},
-        sp.kind==="mob"
-          ? "Bedrock only animates block textures, so this one stays a single frame. All six sides of the mob wear this texture, so an erased pixel is a hole straight through it."
-          : "Bedrock only animates block textures, so this one stays a single frame. Use the eraser for a transparent background."));
+      const note = sp.kind==="mob"
+        ? "Bedrock only animates block textures, so this one stays a single frame. All six sides of the mob wear this texture, so an erased pixel is a hole straight through it."
+        : sp.kind==="ranged"
+        ? "Bedrock only animates block textures, so this one stays a single frame. You're painting the weapon itself — its ammo and the round it fires are drawn for you from these same colours, so changing a swatch restyles all three. Use the eraser for a transparent background."
+        : "Bedrock only animates block textures, so this one stays a single frame. Use the eraser for a transparent background.";
+      right.append(el("p",{class:"sm dim",style:"padding-top:16px;border-top:2px solid var(--line)"}, note));
     }
 
     /* A placeholder used to arrive with no explanation, so a texture the AI
@@ -1450,6 +1689,17 @@ function render(){
       )
     );
     if(S.saved) save.append(el("p",{class:"note ok",style:"margin-top:16px"}, S.saved));
+    /* Without recipes the ammo has no way into a survival inventory on its own,
+       so the pack is only half the answer — the other half is knowing where to
+       find it. */
+    if(sp.kind==="ranged"){
+      save.append(el("div",{class:"note warn",style:"margin-top:16px"},
+        el("p",{class:"sm",style:"margin:0 0 8px"},
+          `This pack also adds ${sp.name} Ammo — the weapon won't fire without some in your inventory.`),
+        el("p",{class:"sm dim",style:"margin:0"},
+          `Bedrock add-ons can't add recipes, so take it from the creative menu under Equipment, or run /give @s custom:${sp.identifier}_ammo 64`)
+      ));
+    }
     save.append(el("p",{class:"sm dim",style:"margin-top:16px"},
       "Windows: double-click the file. Android or iPad: tap it in Files, or use Send to another app. If it gets renamed to .zip, rename it back to .mcaddon. Then turn both packs on in your world settings."));
     app.append(panel("6","Save your add-on", save));

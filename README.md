@@ -39,8 +39,21 @@ just the texture, leaving the plan and your sliders alone.
 | **Block** | A full solid cube, one texture on every side | mining time, blast resistance, light emission (0–15), friction |
 | **Item** | A plain inventory item | stack size |
 | **Food** | An edible item | hunger restored, saturation, time to eat, edible when full |
-| **Tool** | A weapon/tool with durability | durability, attack damage, enchantability |
+| **Tool** | A melee weapon/tool with durability | durability, attack damage, enchantability |
+| **Ranged** | A weapon that fires a projectile — plus the ammo item it feeds on and the round that flies | damage, time between shots, how fast it flies, accuracy, bullet drop, durability, explodes on impact |
 | **Mob** | A one-block cube creature wearing your texture on all six sides, passive or hostile, with a spawn egg | health, walk speed, size, hostile, attack damage |
+
+A **ranged** weapon is three pieces, because that is how Bedrock chains them:
+the weapon's shooter component names an ammo *item*, and the ammo's own
+projectile component names the entity that leaves the barrel. Addonaut writes
+all three. You paint the weapon; the ammo and the round in flight are drawn
+from the same palette, so recolouring a swatch restyles the set.
+
+There are no recipes in a data-only add-on, so the ammo can't be crafted — it
+sits in the creative menu under Equipment, and the save step gives you the
+`/give` line for survival. Turning on **explodes** swaps the round's
+remove-on-hit for a detonation whose blast follows the damage slider, and block
+damage respects `mobGriefing`, like a creeper.
 
 Blocks can also be **animated**: add frames in the editor and Addonaut writes a
 flipbook texture with your chosen ticks-per-frame. Bedrock only animates block
@@ -52,9 +65,10 @@ it slippery"). Accept or decline each one and the sliders update to match.
 ## What it can't build
 
 Custom 3D models beyond a cube, crafting recipes, GUIs, structures, dimensions,
-scripting, ore generation, armour, or anything Java-only. The compatibility
-check names these explicitly rather than pretending — if your idea is half
-buildable, you get the buildable half plus a list of what was dropped.
+scripting, ore generation, armour, custom sounds, magazines or reloading, or
+anything Java-only. The compatibility check names these explicitly rather than
+pretending — if your idea is half buildable, you get the buildable half plus a
+list of what was dropped.
 
 ## What lands in the `.mcaddon`
 
@@ -64,11 +78,15 @@ resource pack that depend on each other, so a single import turns on both:
 ```
 <id>_BP/manifest.json                  format_version 2, min_engine_version 1.20.60
 <id>_BP/blocks|items|entities/<id>.json
+<id>_BP/items/<id>_ammo.json           (ranged only) the ammo the weapon looks for
+<id>_BP/entities/<id>_shot.json        (ranged only) the round in flight
 <id>_RP/manifest.json
 <id>_RP/textures/…/<id>.png            16×16, or 16×(16·frames) when animated
+<id>_RP/textures/…/<id>_ammo.png       (ranged only) generated from your palette
+<id>_RP/textures/…/<id>_shot.png       (ranged only) generated from your palette
 <id>_RP/textures/terrain_texture.json  (blocks) / item_texture.json (items)
 <id>_RP/textures/flipbook_textures.json (animated blocks only)
-<id>_RP/entity|models|render_controllers/… (mobs only)
+<id>_RP/entity|models|render_controllers/… (mobs, and ranged rounds)
 <id>_RP/texts/en_US.lang               display names
 ```
 
@@ -275,7 +293,7 @@ still exists to give you a pattern to paint over when the texture call fails.
 
 No accounts, no server, no remote database, no build tooling, no frameworks, no
 offline/PWA. (Saved add-ons live in a local, on-device library — see above.)
-Addonaut generates the five things Bedrock makes easy and is honest about the
+Addonaut generates the six things Bedrock makes easy and is honest about the
 rest; it is not a full add-on IDE.
 
 ---
