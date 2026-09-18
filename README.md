@@ -39,8 +39,8 @@ just the texture, leaving the plan and your sliders alone.
 | **Block** | A full solid cube, one texture on every side | mining time, blast resistance, light emission (0–15), friction |
 | **Item** | A plain inventory item | stack size |
 | **Food** | An edible item | hunger restored, saturation, time to eat, edible when full |
-| **Tool** | A melee weapon/tool with durability | durability, attack damage, enchantability |
-| **Ranged** | A weapon that fires a projectile — plus the ammo item it feeds on and the round that flies | damage, time between shots, how fast it flies, accuracy, bullet drop, durability, explodes on impact |
+| **Tool** | A melee weapon/tool with durability, held as a solid 3D shape | durability, attack damage, enchantability, thickness |
+| **Ranged** | A weapon that fires a projectile — held as a solid 3D shape, plus the ammo item it feeds on and the round that flies | damage, time between shots, how fast it flies, accuracy, bullet drop, durability, explodes on impact, thickness |
 | **Mob** | A one-block cube creature wearing your texture on all six sides, passive or hostile, with a spawn egg | health, walk speed, size, hostile, attack damage |
 
 A **ranged** weapon is three pieces, because that is how Bedrock chains them:
@@ -62,13 +62,60 @@ textures, so other kinds stay a single frame.
 The AI also proposes four or five **options** per add-on ("make it glow", "make
 it slippery"). Accept or decline each one and the sliders update to match.
 
+## Weapons are solid
+
+Bedrock draws a custom item from its icon by extruding the texture **one pixel**,
+which is why a custom sword, held, is a sheet of paper seen edge-on. Tools and
+ranged weapons don't do that any more: the silhouette you paint is extruded into
+real geometry and shipped as an **attachable**, the resource-pack entry that
+takes over how an item is drawn in a hand.
+
+Every painted pixel becomes a box; boxes that share a colour and a depth are
+merged into the largest rectangle that fits, so a typical weapon comes out at
+twenty to sixty boxes rather than 256. Pixels on the edge of the silhouette are
+extruded shallower than the ones inside it, which reads as a chamfer rather than
+a slab cut from board. **How thick it is** — a slider in step 5, 1 to 8 pixels —
+sets the depth, and the AI suggests one to suit (2 for a blade, 6 for a cannon).
+
+The paint step shows the result: a **3D view beside the canvas**, turning by
+itself, that you can drag to spin. It reads the canvas live, so a pixel you paint,
+a colour you swap and the thickness slider all show up in the solid straight away.
+It holds still if the system asks for reduced motion.
+
+The in-hand pose is vanilla's, lifted from the bow's own wield animation in the
+vanilla resource pack, so the weapon lands where the flat icon used to and the
+only thing that changes in your hand is that it is now solid. An empty texture
+writes no attachable at all and keeps the flat icon — there is nothing to extrude.
+
+Only tools and ranged weapons get this. Food and plain items aren't held up and
+looked at, and blocks and mobs were already cubes.
+
+## The round is sized from the weapon
+
+The round that leaves the barrel used to be a fixed 3-unit cube with no collision
+box — and an entity without one gets Bedrock's default of a **full 1×1×1**, so a
+round drawn three pixels across still hit walls, mobs and players like a flying
+block.
+
+Now the size comes off the weapon itself. The rightmost painted column of the
+texture is the muzzle (the art prompt asks for a barrel pointing right), and how
+much of that column is painted is the bore: a pea-shooter fires a pea, a cannon
+fires something you can see coming, and an exploding round is two pixels fatter
+because it is a shell. It is clamped to 3–8 pixels, so it is never smaller than
+the old fixed round and **never more than half a block**. The collision box is
+written to match, the way vanilla's own arrow declares 0.25.
+
+The 3D view parks the round at the muzzle it was sized from, at the same scale,
+so the two get compared rather than imagined.
+
 ## What it can't build
 
-Custom 3D models beyond a cube, crafting recipes, GUIs, structures, dimensions,
-scripting, ore generation, armour, custom sounds, magazines or reloading, or
-anything Java-only. The compatibility check names these explicitly rather than
-pretending — if your idea is half buildable, you get the buildable half plus a
-list of what was dropped.
+Hand-sculpted 3D models — a tool or ranged weapon is extruded from its own
+texture, and blocks and mobs are cubes — crafting recipes, GUIs, structures,
+dimensions, scripting, ore generation, armour, custom sounds, magazines or
+reloading, or anything Java-only. The compatibility check names these
+explicitly rather than pretending — if your idea is half buildable, you get the
+buildable half plus a list of what was dropped.
 
 ## What lands in the `.mcaddon`
 
@@ -86,6 +133,10 @@ resource pack that depend on each other, so a single import turns on both:
 <id>_RP/textures/…/<id>_shot.png       (ranged only) generated from your palette
 <id>_RP/textures/terrain_texture.json  (blocks) / item_texture.json (items)
 <id>_RP/textures/flipbook_textures.json (animated blocks only)
+<id>_RP/attachables/<id>.attachable.json   (tools and ranged) the 3D held weapon
+<id>_RP/models/entity/<id>_held.geo.json   (tools and ranged) the extruded shape
+<id>_RP/animations/<id>.animation.json     (tools and ranged) how it sits in a hand
+<id>_RP/textures/entity/<id>.png           (tools and ranged) the same texture, off-atlas
 <id>_RP/entity|models|render_controllers/… (mobs, and ranged rounds)
 <id>_RP/texts/en_US.lang               display names
 ```
