@@ -155,6 +155,12 @@
   .frame > button.pick.on{border-color:var(--gold)}
   .frame .x{position:absolute;top:-8px;right:-8px;width:20px;height:20px;padding:0;font-size:12px;box-shadow:none}
 
+  /* 3D view — a weapon is a few dozen boxes, so this is a plain canvas and a
+     back-to-front sort rather than a WebGL dependency. */
+  .view3d{display:block;width:100%;max-width:300px;aspect-ratio:1;border:2px solid var(--ink);
+    background:#1b1f25;touch-action:none;cursor:grab}
+  .view3d:active{cursor:grabbing}
+
   .spin{width:14px;height:14px;background:var(--grass);animation:p 1s steps(2) infinite}
   @keyframes p{50%{opacity:.2}}
   @media(prefers-reduced-motion:reduce){.spin{animation:none}}
@@ -269,7 +275,7 @@ const S = {
 };
 
 /* Version — single source of truth, shown in the header. Bump on release. */
-const APP_VERSION = "0.6.0";
+const APP_VERSION = "0.7.0";
 
 /* Where the model picker starts before Google's own list arrives — and where
    it stays if that list never does (no key yet, offline, refused). Discovery
@@ -427,7 +433,8 @@ function restoreEntry(e){
   Object.assign(S,{
     stage:"studio", entryId:e.id, created:e.created,
     desc:e.desc||"", kindHint:e.kindHint||"auto",
-    spec:e.spec, props:Object.assign({},e.props||{}), decided:Object.assign({},e.decided||{}),
+    spec:e.spec, props:Object.assign({}, DEFAULT_PROPS[e.spec&&e.spec.kind]||{}, e.props||{}),
+    decided:Object.assign({},e.decided||{}),
     palette:(e.palette||[]).slice(), frames:(e.frames||[]).map(f=>f.slice()),
     animate:!!e.animate, tpf:e.tpf||10,
     frameIdx:0, brush:0, erasing:false, showEditor:false, saved:"", confirmDelete:null,
@@ -439,6 +446,9 @@ function restoreEntry(e){
   if(S.spec){
     S.spec.options = Array.isArray(S.spec.options) ? S.spec.options : [];
     S.spec.unsupported = Array.isArray(S.spec.unsupported) ? S.spec.unsupported : [];
+    /* Accepting an option rebuilds the working copy from the plan, so a knob
+       this build added has to reach the plan too, not just S.props. */
+    S.spec.props = Object.assign({}, DEFAULT_PROPS[S.spec.kind]||{}, S.spec.props||{});
   }
 }
 
@@ -511,11 +521,97 @@ function framesToPng(frames, palette){
    ============================================================ */
 const TE=new TextEncoder();
 const J=o=>TE.encode(JSON.stringify(o,null,2));
+/* The same JSON with every all-numeric array folded onto one line. An extruded
+   weapon is up to sixty cubes and each one carries fourteen small arrays, which
+   at one element per indented line is a 95 KB file for a sword — nearly all of
+   it whitespace, in a ZIP this app deliberately stores uncompressed. Kept off
+   the general J(): this only ever runs over numbers generated right here, and a
+   description the AI wrote is a string that could contain brackets of its own.
+   The character class excludes [ and ], so a match can never span a nested
+   array. */
+const Jgeo=o=>TE.encode(
+  JSON.stringify(o,null,2)
+    .replace(/\[[\s\d.,\-]*\]/g, m=>m.replace(/\s+/g," ").replace("[ ","[").replace(" ]","]"))
+    /* And once the arrays are on one line, so is the face that holds two of
+       them — six of these per cube is where the rest of the file went. */
+    .replace(/\{\s*"uv": (\[[^\]]*\]),\s*"uv_size": (\[[^\]]*\])\s*\}/g, '{"uv": $1, "uv_size": $2}')
+);
 const T=s=>TE.encode(s);
 const uuid=()=> (crypto.randomUUID ? crypto.randomUUID()
   : "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g,c=>{
       const r=Math.random()*16|0; return (c==="x"?r:(r&3|8)).toString(16);
     }));
+
+/* A weapon you hold, as real geometry instead of the one-pixel sheet Bedrock
+   extrudes from an item icon. What Bedrock needs for that is an ATTACHABLE —
+   a resource-pack entry named after the item, which takes over how the item is
+   drawn in a hand. It needs four things beside the item itself: the attachable,
+   a geometry, a wield animation, and a copy of the texture under
+   textures/entity, because the item atlas is for the inventory icon and an
+   attachable reads a plain path instead.
+
+   The pose is vanilla's, on purpose. Minecraft holds a 16x16 item sprite at a
+   particular angle, and these numbers are lifted from the bow's own wield
+   animation in the vanilla resource pack — so the weapon lands where the flat
+   icon used to be and the only thing that changes in your hand is that it is
+   now solid. The render controller is vanilla's too, which is what gives an
+   enchanted one its glint for free. */
+function heldFiles(F, id, frame, png, thickness){
+  const boxes = voxelBoxes(frame, thickness);
+  if(!boxes.length) return [];          // nothing painted — leave the flat icon be
+  const cubes = boxes.map(b=>{
+    /* The face you look at gets the rectangle it was merged from. The extruded
+       sides are one flat colour whatever you do, so a single texel of it is
+       all they need — and one texel can't bleed into its neighbour. */
+    const flat={uv:[b.x,b.y],uv_size:[b.w,b.h]};
+    const edge={uv:[b.x,b.y],uv_size:[1,1]};
+    return {
+      origin:[b.x-8, 8-b.y-b.h, -b.d/2],
+      size:[b.w,b.h,b.d],
+      uv:{north:flat,south:flat,east:edge,west:edge,up:edge,down:edge}
+    };
+  });
+  return [
+    {name:`${F}_RP/attachables/${F}.attachable.json`,data:J({
+      format_version:"1.10.0",
+      "minecraft:attachable":{description:{
+        identifier:id,
+        materials:{default:"entity_alphatest",enchanted:"entity_alphatest_glint"},
+        textures:{default:`textures/entity/${F}`,enchanted:"textures/misc/enchanted_item_glint"},
+        geometry:{default:`geometry.${F}_held`},
+        animations:{wield:`animation.${F}.wield`},
+        scripts:{animate:["wield"]},
+        render_controllers:["controller.render.item_default"]
+      }}
+    })},
+    {name:`${F}_RP/models/entity/${F}_held.geo.json`,data:Jgeo({
+      format_version:"1.12.0",
+      "minecraft:geometry":[{
+        description:{identifier:`geometry.${F}_held`,texture_width:16,texture_height:16,
+          visible_bounds_width:3,visible_bounds_height:3,visible_bounds_offset:[0,0,0]},
+        bones:[{name:"rightitem",pivot:[0,0,0],cubes}]
+      }]
+    })},
+    /* One animation with the first-person case inline, which is how the vanilla
+       bow does it — two animations would need a script condition to pick
+       between them and this needs none. */
+    {name:`${F}_RP/animations/${F}.animation.json`,data:J({
+      format_version:"1.10.0",
+      animations:{[`animation.${F}.wield`]:{
+        loop:true,
+        bones:{rightitem:{
+          position:[
+            "c.is_first_person ? -5.5 : 0.5",
+            "c.is_first_person ? -3.0 : -2.5",
+            "c.is_first_person ? -3.0 : 1.0"
+          ],
+          rotation:[0,-135,90]
+        }}
+      }}
+    })},
+    {name:`${F}_RP/textures/entity/${F}.png`,data:png}
+  ];
+}
 
 function buildAddon(o){
   const id=`custom:${o.identifier}`, F=o.identifier, files=[];
@@ -596,6 +692,9 @@ function buildAddon(o){
       resource_pack_name:F,texture_name:"atlas.items",
       texture_data:{[F]:{textures:`textures/items/${F}`}}
     })});
+    /* A tool is a weapon you swing, so it is worth a real model. Food and plain
+       items are not held up and looked at, and they stay flat sprites. */
+    if(o.kind==="tool") files.push(...heldFiles(F, id, o.frames[0], png, P.thickness));
     lang.push(`item.${id}.name=${o.name}`);
   }
 
@@ -612,6 +711,9 @@ function buildAddon(o){
     const shotId=`${id}_shot`, shotF=`${F}_shot`;
     const dmg=num(P.damage,6), boom=!!P.explodes;
     const acc=Math.max(0,Math.min(1,num(P.accuracy,.9)));
+    /* How big the round is, in texture pixels, read off the weapon's muzzle.
+       16 of these make a block, so the ceiling of 8 is half a block. */
+    const shotPx=shotSize(o.frames[0], boom);
 
     files.push({name:`${F}_BP/items/${F}.json`,data:J({
       format_version:"1.20.60",
@@ -683,6 +785,12 @@ function buildAddon(o){
             should_bounce:false
           },
           "minecraft:physics":{},
+          /* Without this, Bedrock gives an entity a full 1x1x1 box — so a round
+             drawn three pixels across was still hitting walls, mobs and the
+             player like a flying block, whatever the model said. Vanilla's own
+             arrow declares 0.25, and this follows the same rule: the box is the
+             size of the round. */
+          "minecraft:collision_box":{width:shotPx/16,height:shotPx/16},
           "minecraft:conditional_bandwidth_optimization":{}
         }
       }
@@ -716,15 +824,16 @@ function buildAddon(o){
         render_controllers:[`controller.render.${shotF}`]
       }}
     })});
-    /* A 3-unit cube, per-face UV like the mob's, so the round reads as a
-       tracer from any angle instead of a sprite that vanishes edge-on. */
-    const pface={uv:[0,0],uv_size:[16,16]};
+    /* A cube the size of the bore, per-face UV like the mob's, so the round
+       reads as a tracer from any angle instead of a sprite that vanishes
+       edge-on. It used to be a fixed 3 units whatever fired it. */
+    const pface={uv:[0,0],uv_size:[16,16]}, half=shotPx/2;
     files.push({name:`${F}_RP/models/entity/${shotF}.geo.json`,data:J({
       format_version:"1.12.0",
       "minecraft:geometry":[{
         description:{identifier:`geometry.${shotF}`,texture_width:16,texture_height:16,
           visible_bounds_width:1,visible_bounds_height:1,visible_bounds_offset:[0,0,0]},
-        bones:[{name:"body",pivot:[0,0,0],cubes:[{origin:[-1.5,-1.5,-1.5],size:[3,3,3],
+        bones:[{name:"body",pivot:[0,0,0],cubes:[{origin:[-half,-half,-half],size:[shotPx,shotPx,shotPx],
           uv:{north:pface,south:pface,east:pface,west:pface,up:pface,down:pface}}]}]
       }]
     })});
@@ -745,6 +854,7 @@ function buildAddon(o){
         [ammoF]:{textures:`textures/items/${ammoF}`}
       }
     })});
+    files.push(...heldFiles(F, id, o.frames[0], png, P.thickness));
     lang.push(`item.${id}.name=${o.name}`);
     lang.push(`item.${ammoId}.name=${o.name} Ammo`);
     lang.push(`entity.${shotId}.name=${o.name} Shot`);
@@ -892,9 +1002,9 @@ async function explain(res){
 }
 
 const SPEC_PROMPT = (desc, hint) => `You plan Minecraft Bedrock Edition add-ons for a generator that builds exactly six things:
-block (a full solid cube, one texture on all sides), item (plain inventory item), food (edible item), tool (melee weapon/tool with durability and damage), ranged (a weapon that fires a projectile — a gun, bow or blaster; the pack also gets a matching ammo item and the flying round itself), mob (a one-block cube creature wearing its texture on all six sides, passive or hostile).
+block (a full solid cube, one texture on all sides), item (plain inventory item), food (edible item), tool (melee weapon/tool with durability and damage, held as a solid 3D shape), ranged (a weapon that fires a projectile — a gun, bow or blaster, also held as a solid 3D shape; the pack also gets a matching ammo item and the flying round itself), mob (a one-block cube creature wearing its texture on all six sides, passive or hostile).
 
-It CANNOT do: custom 3D models beyond a cube, crafting recipes, GUIs, structures, dimensions, scripting, ore generation, armour, custom sounds, magazines or reloading, or anything Java-only.
+It CANNOT do: hand-sculpted 3D models (a tool or ranged weapon is extruded into a solid from its own 16x16 texture, and blocks and mobs are cubes), crafting recipes, GUIs, structures, dimensions, scripting, ore generation, armour, custom sounds, magazines or reloading, or anything Java-only.
 
 Player's request: "${desc}"
 ${hint && hint!=="auto" ? `They chose the kind: ${hint}` : "Pick the best kind yourself."}
@@ -915,8 +1025,8 @@ props keys by kind:
 block -> hardness, resistance, luminance (0-15), friction (0-1)
 item -> stackSize
 food -> nutrition (1-20), saturation (0-2), useDuration, canAlwaysEat (bool)
-tool -> durability, damage, enchantability
-ranged -> damage (what one hit takes off), fireRate (0.05-3, seconds between shots), power (0.5-8, how fast the round flies), accuracy (0-1, 1 is no scatter at all), drop (0-0.2, how far the round falls over distance), durability (shots before it breaks), explodes (bool)
+tool -> durability, damage, enchantability, thickness (1-8, how many pixels deep the held 3D shape is: 2 for a blade, 5 for a club)
+ranged -> damage (what one hit takes off), fireRate (0.05-3, seconds between shots), power (0.5-8, how fast the round flies), accuracy (0-1, 1 is no scatter at all), drop (0-0.2, how far the round falls over distance), durability (shots before it breaks), explodes (bool), thickness (1-8, how many pixels deep the held 3D shape is: 3 for a pistol, 6 for a cannon)
 mob -> health, speed (0.1-0.6), scale (0.2-3, where 1 is one block), hostile (bool), attackDamage
 
 Each option's patch may only set keys from that kind's list. Set compatible:false only if nothing buildable can be salvaged.
@@ -929,7 +1039,7 @@ Reply with ONLY this JSON, no markdown fence:
 {"palette":["#rrggbb", 4 to 10 colours],"pixels":["................", exactly 16 strings of exactly 16 characters]}
 
 Each character is a lowercase hex digit 0-f indexing into palette, or "." for transparent.
-A block or mob texture must be fully opaque with no ".": a block should tile seamlessly, and a mob wears the texture on all six sides of a cube, so a "." there is a hole straight through it. An item, tool, food or ranged texture uses "." for the background around the shape; draw a ranged weapon side-on with its barrel pointing right. Use at least 3 shades for depth, never a flat single-colour fill. Match Minecraft's chunky high-contrast pixel style.`;
+A block or mob texture must be fully opaque with no ".": a block should tile seamlessly, and a mob wears the texture on all six sides of a cube, so a "." there is a hole straight through it. An item, tool, food or ranged texture uses "." for the background around the shape; draw a ranged weapon side-on with its barrel pointing right. A tool or ranged texture is extruded into a solid 3D model from exactly this silhouette, and the width of the barrel's last column sets the size of the round it fires, so keep the shape connected and deliberate — a stray pixel becomes a chip floating beside the weapon. Use at least 3 shades for depth, never a flat single-colour fill. Match Minecraft's chunky high-contrast pixel style.`;
 
 /* ============================================================
    6. TEXTURE HELPERS
@@ -997,6 +1107,74 @@ const fallbackFrame = ()=> Array.from({length:16},(_,y)=>
     (x===0||y===0||x===15||y===15) ? "4" : String((x*7+y*13+(x*y)%5)%4)
   ).join(""));
 
+/* ------------------------------------------------------------
+   Extruding a painted silhouette into a solid
+   ------------------------------------------------------------
+   Bedrock's own answer to a 16x16 item texture is to extrude it ONE pixel, which
+   is why a custom sword, held, is a sheet of paper seen edge-on. Giving a weapon
+   real depth means turning those pixels into boxes.
+
+   Every painted pixel is a box; boxes that share a colour and a depth are then
+   merged into the largest rectangle that fits, scanning from the top left. A
+   typical weapon lands at twenty to sixty boxes rather than 256, which matters
+   twice over: the same list is what the .mcaddon carries as geometry AND what
+   the studio's 3D view redraws every frame.
+
+   Pixels on the edge of the silhouette are extruded shallower than the ones
+   inside it, so the result is chamfered rather than a slab cut from board. */
+function voxelBoxes(frame, thickness){
+  const at = (x,y) => (x<0||y<0||x>15||y>15) ? "." : (((frame||[])[y]||"")[x] || ".");
+  const core = Math.max(1, Math.min(16, Math.round(num(thickness,3))));
+  /* The chamfer is a fraction of the depth, not a fixed step off it: a blade
+     two pixels wide is ALL edge pixels, and taking two off that would put it
+     right back to the flat sheet this exists to get rid of. */
+  const rim  = Math.max(1, Math.round(core*.6));
+  /* Inside means all four neighbours are painted. Everything else is the rim,
+     including a lone pixel, which comes out as a small stud rather than a peg. */
+  const depthAt = (x,y) =>
+    (at(x-1,y)!=="." && at(x+1,y)!=="." && at(x,y-1)!=="." && at(x,y+1)!==".") ? core : rim;
+
+  const done = Array.from({length:16},()=>new Array(16).fill(false));
+  const boxes = [];
+  for(let y=0;y<16;y++) for(let x=0;x<16;x++){
+    if(done[y][x]) continue;
+    const ch=at(x,y);
+    if(ch===".") continue;
+    const d=depthAt(x,y);
+    let w=1;
+    while(x+w<16 && !done[y][x+w] && at(x+w,y)===ch && depthAt(x+w,y)===d) w++;
+    let h=1;
+    grow: while(y+h<16){
+      for(let i=0;i<w;i++){
+        if(done[y+h][x+i] || at(x+i,y+h)!==ch || depthAt(x+i,y+h)!==d) break grow;
+      }
+      h++;
+    }
+    for(let j=0;j<h;j++) for(let i=0;i<w;i++) done[y+j][x+i]=true;
+    boxes.push({x,y,w,h,d,ch});
+  }
+  return boxes;
+}
+
+/* The muzzle is the rightmost painted column — the art prompt asks for a barrel
+   pointing right — so that one column says both how wide the bore is and where
+   the round leaves from. */
+function muzzleOf(frame){
+  for(let x=15;x>=0;x--){
+    let top=-1, bottom=-1, bore=0;
+    for(let y=0;y<16;y++) if((((frame||[])[y]||"")[x]||".")!=="."){ if(top<0) top=y; bottom=y; bore++; }
+    if(bore) return {x, top, bottom, bore};
+  }
+  return {x:8, top:7, bottom:8, bore:0};
+}
+
+/* A round is sized from the weapon that fires it, so a pea-shooter fires a pea
+   and a cannon fires something you can see coming. Never more than half a block
+   either way: at a full block it stops reading as a bullet and starts reading as
+   a flying crate. An exploding round is a shell, so it gets two pixels more. */
+const shotSize = (frame, explodes) =>
+  Math.max(3, Math.min(8, Math.min(6, muzzleOf(frame).bore || 3) + (explodes ? 2 : 0)));
+
 /* ============================================================
    7. DOM HELPERS
    ============================================================ */
@@ -1055,6 +1233,149 @@ function grid(rows, palette, size, onPaint){
     g.append(r);
   });
   return g;
+}
+
+/* 3D view of the extruded weapon.
+
+   Everything in the scene is an axis-aligned box, so there is nothing a
+   renderer has to do here but rotate eight corners per box, drop the faces
+   pointing away from you, and paint what is left back to front. No WebGL and
+   no library — a weapon is a few dozen boxes and a phone draws that in under a
+   millisecond.
+
+   The scene is rebuilt from the app's state on every frame rather than handed
+   in once, which is what makes painting a pixel, swapping a colour or dragging
+   the thickness slider show up here the moment it happens.
+
+   Faces are shaded by which way they point IN THE MODEL, not toward some light
+   that turns with the camera — the same trick Minecraft uses, so the top face
+   stays the bright one however you spin it. */
+const FACE_SHADE = {up:1, down:.5, side:.68, flat:.87};
+const FACES_OF_BOX = [
+  {k:"flat", n:[0,0,1],  c:b=>[[b.x0,b.y0,b.z1],[b.x1,b.y0,b.z1],[b.x1,b.y1,b.z1],[b.x0,b.y1,b.z1]]},
+  {k:"flat", n:[0,0,-1], c:b=>[[b.x0,b.y0,b.z0],[b.x1,b.y0,b.z0],[b.x1,b.y1,b.z0],[b.x0,b.y1,b.z0]]},
+  {k:"side", n:[1,0,0],  c:b=>[[b.x1,b.y0,b.z0],[b.x1,b.y0,b.z1],[b.x1,b.y1,b.z1],[b.x1,b.y1,b.z0]]},
+  {k:"side", n:[-1,0,0], c:b=>[[b.x0,b.y0,b.z0],[b.x0,b.y0,b.z1],[b.x0,b.y1,b.z1],[b.x0,b.y1,b.z0]]},
+  {k:"up",   n:[0,1,0],  c:b=>[[b.x0,b.y1,b.z0],[b.x1,b.y1,b.z0],[b.x1,b.y1,b.z1],[b.x0,b.y1,b.z1]]},
+  {k:"down", n:[0,-1,0], c:b=>[[b.x0,b.y0,b.z0],[b.x1,b.y0,b.z0],[b.x1,b.y0,b.z1],[b.x0,b.y0,b.z1]]}
+];
+function shadeHex(hex, k){
+  const m=/^#?([0-9a-f]{6})$/i.exec(String(hex||""));
+  const n = m ? parseInt(m[1],16) : 0xff00ff;
+  const ch = i => Math.max(0,Math.min(255, Math.round(((n>>i)&255)*k)));
+  return `rgb(${ch(16)},${ch(8)},${ch(0)})`;
+}
+
+function view3d(scene){
+  const cv = el("canvas",{class:"view3d", role:"img",
+    "aria-label":"A turning 3D view of the weapon you are painting"});
+  let yaw=-0.6, pitch=-0.32, drag=null;
+  /* Spinning by itself is how you notice it is 3D at all, but it stops the
+     moment you take hold of it, and never starts if the system asks for less
+     motion. */
+  let spin = !(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+
+  cv.addEventListener("pointerdown",e=>{
+    e.preventDefault(); spin=false; drag={x:e.clientX,y:e.clientY};
+    try{ cv.setPointerCapture(e.pointerId); }catch{}
+  });
+  cv.addEventListener("pointermove",e=>{
+    if(!drag) return;
+    yaw += (e.clientX-drag.x)*.013;
+    pitch = Math.max(-1.45, Math.min(1.45, pitch + (e.clientY-drag.y)*.013));
+    drag={x:e.clientX,y:e.clientY};
+  });
+  const release=()=>{ drag=null; };
+  cv.addEventListener("pointerup",release);
+  cv.addEventListener("pointercancel",release);
+
+  function paint(){
+    const w=Math.round(cv.clientWidth)||260, h=Math.round(cv.clientHeight)||260;
+    const dpr=Math.min(2, window.devicePixelRatio||1);
+    if(cv.width!==Math.round(w*dpr) || cv.height!==Math.round(h*dpr)){
+      cv.width=Math.round(w*dpr); cv.height=Math.round(h*dpr);
+    }
+    const g=cv.getContext("2d");
+    g.setTransform(dpr,0,0,dpr,0,0);
+    g.clearRect(0,0,w,h);
+
+    const boxes=scene();
+    if(!boxes.length) return;
+    /* Fit to the scene, with a floor of one texture's worth, so a weapon that
+       fills the grid and one that doesn't are drawn at the same size. */
+    let ext=9;
+    boxes.forEach(b=>{ ext=Math.max(ext,
+      Math.abs(b.x0),Math.abs(b.x1),Math.abs(b.y0),Math.abs(b.y1),Math.abs(b.z0),Math.abs(b.z1)); });
+    const k=(Math.min(w,h)*.44)/ext, cx=w/2, cy=h/2;
+
+    const cyaw=Math.cos(yaw), syaw=Math.sin(yaw), cpit=Math.cos(pitch), spit=Math.sin(pitch);
+    /* Yaw about the model's up axis, then pitch about the camera's. Orthographic
+       on purpose: a pixel-art weapon read through a perspective lens just looks
+       bent. Depth is the rotated z, and bigger means nearer. */
+    const turn=(x,y,z)=>{
+      const X = x*cyaw + z*syaw, Z = z*cyaw - x*syaw;
+      return [X, y*cpit - Z*spit, y*spit + Z*cpit];
+    };
+
+    const quads=[];
+    boxes.forEach(b=>{
+      FACES_OF_BOX.forEach(f=>{
+        const nrm=turn(f.n[0],f.n[1],f.n[2]);
+        if(nrm[2] <= 0) return;                       // pointing away from us
+        const pts=f.c(b).map(p=>turn(p[0],p[1],p[2]));
+        const z=(pts[0][2]+pts[1][2]+pts[2][2]+pts[3][2])/4;
+        quads.push({z, fill:shadeHex(b.color, FACE_SHADE[f.k]),
+          pts:pts.map(p=>[cx+p[0]*k, cy-p[1]*k])});
+      });
+    });
+    quads.sort((a,b)=>a.z-b.z);                        // far first, near last
+
+    g.lineJoin="round";
+    g.lineWidth=1;
+    quads.forEach(q=>{
+      g.beginPath();
+      g.moveTo(q.pts[0][0], q.pts[0][1]);
+      for(let i=1;i<4;i++) g.lineTo(q.pts[i][0], q.pts[i][1]);
+      g.closePath();
+      g.fillStyle=q.fill; g.fill();
+      /* Stroked in its own colour: neighbouring quads share an edge and
+         antialiasing leaves a seam of background between them otherwise. */
+      g.strokeStyle=q.fill; g.stroke();
+    });
+  }
+
+  let last=0;
+  function frame(t){
+    if(!cv.isConnected) return;      // render() replaced the panel; let this die
+    requestAnimationFrame(frame);
+    if(t-last < 33) return;          // 30fps is more than this needs
+    last=t;
+    if(spin) yaw += .012;
+    paint();
+  }
+  requestAnimationFrame(frame);
+  return cv;
+}
+
+/* What the 3D view draws: the painted texture extruded, and — for a ranged
+   weapon — the round it fires, floating just off the muzzle it was sized from,
+   so the two are compared rather than imagined. */
+function weaponScene(){
+  const frame=S.frames[S.frameIdx]||blankFrame();
+  const out=voxelBoxes(frame, S.props.thickness).map(b=>({
+    x0:b.x-8,      x1:b.x-8+b.w,
+    y0:8-b.y-b.h,  y1:8-b.y,
+    z0:-b.d/2,     z1:b.d/2,
+    color:S.palette[parseInt(b.ch,16)]||"#ff00ff"
+  }));
+  if(out.length && S.spec && S.spec.kind==="ranged"){
+    const m=muzzleOf(frame), r=shotSize(frame, !!S.props.explodes)/2;
+    const cy=8-(m.top+m.bottom+1)/2;
+    const cx=m.x-8+r+3;
+    out.push({x0:cx-r,x1:cx+r,y0:cy-r,y1:cy+r,z0:-r,z1:r,
+      color:S.palette[parseInt(paletteShades(S.palette).m,16)]||"#ff00ff"});
+  }
+  return out;
 }
 
 /* ============================================================
@@ -1352,6 +1673,7 @@ const META = {
   durability:["Durability","uses",1,3000,10],
   damage:["Attack damage","",0,20,1],
   enchantability:["Enchantability","",0,30,1],
+  thickness:["How thick it is","pixels deep",1,8,1],
   fireRate:["Time between shots","seconds",.05,3,.05],
   power:["How fast it flies","",.5,8,.1],
   accuracy:["Accuracy","1 = no scatter",0,1,.05],
@@ -1378,8 +1700,8 @@ const DEFAULT_PROPS = {
   block:{hardness:1.5,resistance:3,luminance:0,friction:.6},
   item:{stackSize:64},
   food:{nutrition:4,saturation:.6,useDuration:1.6,canAlwaysEat:false},
-  tool:{durability:250,damage:6,enchantability:10},
-  ranged:{damage:6,fireRate:.25,power:3,accuracy:.9,drop:.02,durability:250,explodes:false},
+  tool:{durability:250,damage:6,enchantability:10,thickness:3},
+  ranged:{damage:6,fireRate:.25,power:3,accuracy:.9,drop:.02,durability:250,explodes:false,thickness:3},
   mob:{health:10,speed:.25,scale:1,hostile:false,attackDamage:3}
 };
 
@@ -1561,7 +1883,19 @@ function render(){
       btn("Clear frame",()=>{ S.frames[S.frameIdx]=blankFrame(); redrawCanvas(); touch(); },"b-quiet b-sm")
     );
 
+    /* A weapon is the one thing in here that isn't a flat texture once it is in
+       the game, so the studio shows the shape rather than leaving you to
+       imagine it from a side profile. It reads the canvas live: paint a pixel
+       and it turns up in the solid straight away. */
+    const solid = sp.kind==="tool" || sp.kind==="ranged";
     const right=el("div",{style:"flex:1 1 240px;min-width:240px"},
+      solid ? el("div",{style:"margin-bottom:16px"},
+        view3d(weaponScene),
+        el("p",{class:"sm dim",style:"margin:8px 0 0"},
+          sp.kind==="ranged"
+            ? "This is the shape that goes in the pack — solid, not a one-pixel sheet. Drag to turn it. The round it fires floats at the muzzle, drawn to the same scale."
+            : "This is the shape that goes in the pack — solid, not a one-pixel sheet. Drag to turn it.")
+      ) : null,
       el("p",{class:"sm dim"},"Colours — tap a swatch to use it, tap again to change it"),
       swatches, tools
     );
@@ -1608,7 +1942,9 @@ function render(){
       const note = sp.kind==="mob"
         ? "Bedrock only animates block textures, so this one stays a single frame. All six sides of the mob wear this texture, so an erased pixel is a hole straight through it."
         : sp.kind==="ranged"
-        ? "Bedrock only animates block textures, so this one stays a single frame. You're painting the weapon itself — its ammo and the round it fires are drawn for you from these same colours, so changing a swatch restyles all three. Use the eraser for a transparent background."
+        ? "Bedrock only animates block textures, so this one stays a single frame. You're painting the weapon itself — its ammo and the round it fires are drawn for you from these same colours, so changing a swatch restyles all three. The shape is extruded into a solid: How thick it is, in step 5, sets the depth, and the last painted column of the barrel sets how big the round is. Use the eraser for a transparent background."
+        : sp.kind==="tool"
+        ? "Bedrock only animates block textures, so this one stays a single frame. The shape you paint is extruded into a solid weapon — How thick it is, in step 5, sets the depth. Use the eraser for a transparent background."
         : "Bedrock only animates block textures, so this one stays a single frame. Use the eraser for a transparent background.";
       right.append(el("p",{class:"sm dim",style:"padding-top:16px;border-top:2px solid var(--line)"}, note));
     }
